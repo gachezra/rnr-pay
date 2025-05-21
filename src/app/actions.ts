@@ -6,6 +6,7 @@ import { db } from '@/lib/firebase'; // This will use the simulated DB if Fireba
 import { sendPaymentConfirmationEmail } from '@/lib/emailService';
 import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore'; // Actual imports
 import axios from 'axios';
+require('dotenv').config();
 
 const PaymentSchema = z.object({
   ticketId: z.string().min(1, "Ticket ID is required"),
@@ -59,23 +60,24 @@ export async function handlePaymentConfirmation(
       api_key: api,
       email: umsEmail,
       account_id: account,
-      msisdn: transactionData.phone,
-      amount: transactionData.amount,
-      reference: transactionData.ticketId
+      msisdn: phone,
+      amount: amount,
+      reference: ticketId
     })
     // Simulate updating 'tickets' collection
     const ticketRef = doc(db, 'tickets', ticketId); // Actual Firestore call
     await updateDoc(ticketRef, { status: 'confirmed', lastPaymentAttempt: serverTimestamp() }); // Actual Firestore call
 
     // Send confirmation email if email is provided
-    if (email) {
-      await sendPaymentConfirmationEmail(email, ticketId, amount, transactionRef.id);
-    }
+    // if (email) {
+    //   await sendPaymentConfirmationEmail(email, ticketId, amount, transactionRef.id);
+    // }
 
     return {
       success: true,
       message: 'Payment confirmed successfully!',
       transactionId: transactionRef.id,
+      result: res.data
     };
   } catch (error) {
     console.error("Payment confirmation error:", error);

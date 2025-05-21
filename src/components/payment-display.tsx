@@ -83,7 +83,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     if (result.success) {
       toast({
         title: "Payment Confirmed",
-        description: result.message,
+        description: result.result,
       });
     } else {
       toast({
@@ -107,7 +107,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       return (
         <div className="flex flex-col items-center justify-center space-y-2 text-green-500">
           <CheckCircle2 className="h-12 w-12" />
-          <span className="text-xl font-semibold">Payment Confirmed!</span>
+          <span className="text-xl font-semibold">Payment Initiated!</span>
           {paymentResult.transactionId && <p className="text-sm text-muted-foreground">Transaction ID: {paymentResult.transactionId}</p>}
         </div>
       );
@@ -176,7 +176,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
               <div className="flex items-center space-x-3">
                 <Phone className="h-5 w-5 text-primary" />
                 <Label htmlFor="phone-input" className="text-base font-medium text-foreground/80">
-                  Phone (Optional):
+                  Phone:
                 </Label>
               </div>
               {canEditContactInfo && !initialPhone ? (
