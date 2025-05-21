@@ -19,6 +19,7 @@ export interface PaymentConfirmationResult {
   success: boolean;
   message?: string;
   transactionId?: string;
+  result?: string;
 }
 
 export async function handlePaymentConfirmation(
@@ -51,7 +52,7 @@ export async function handlePaymentConfirmation(
     // Simulate adding to 'transactions' collection
     const transactionRef = await addDoc(collection(db, 'transactions'), transactionData); // Actual Firestore call
     
-    let url = 'https://api.umeskiasoftwares.com/api/v1/initiatestk';
+    let url = 'https://api.umeskiasoftwares.com/api/v1/intiatestk';
     let api = process.env.API_KEY;
     let umsEmail = 'kipkoechgezra@gmail.com';
     let account = process.env.ACCOUNT_ID;

@@ -24,7 +24,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark"> {/* Force dark theme as per design */}
+    <html lang="en" className="dark">{/* Force dark theme as per design */}
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased font-sans`}>
         {children}
         <Toaster />
