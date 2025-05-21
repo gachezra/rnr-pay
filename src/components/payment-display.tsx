@@ -1,10 +1,11 @@
+
 "use client";
 
 import type { FC } from 'react';
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input"; // For consistent styling if used, though here we use text
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, CheckCircle2, XCircle, Ticket, CreditCard, Phone, Mail } from 'lucide-react';
@@ -18,24 +19,35 @@ interface PaymentDisplayProps {
   email?: string;
 }
 
-interface PaymentDetail {
-  label: string;
-  value?: string;
-  icon: React.ElementType;
-}
-
-export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phone, email }) => {
+export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phone: initialPhone, email: initialEmail }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [paymentResult, setPaymentResult] = useState<PaymentConfirmationResult | null>(null);
   const [showMissingParamsError, setShowMissingParamsError] = useState(false);
+  
+  const [currentPhone, setCurrentPhone] = useState(initialPhone || '');
+  const [currentEmail, setCurrentEmail] = useState(initialEmail || '');
+
   const { toast } = useToast();
 
   useEffect(() => {
     if (!ticketId || !amount) {
       setShowMissingParamsError(true);
       setPaymentResult({ success: false, message: "Ticket ID and Amount are required parameters." });
+    } else {
+      setShowMissingParamsError(false);
+      // Reset payment result if params change and are valid, allowing for a new attempt
+      setPaymentResult(null); 
     }
   }, [ticketId, amount]);
+
+  useEffect(() => {
+    setCurrentPhone(initialPhone || '');
+  }, [initialPhone]);
+
+  useEffect(() => {
+    setCurrentEmail(initialEmail || '');
+  }, [initialEmail]);
+
 
   const onConfirmPayment = async () => {
     if (!ticketId || !amount) {
@@ -49,7 +61,22 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
     setIsLoading(true);
     setPaymentResult(null);
-    const result = await handlePaymentConfirmation({ ticketId, amount, phone, email });
+
+    const paymentParams: {
+      ticketId: string;
+      amount: string;
+      phone?: string;
+      email?: string;
+    } = { ticketId, amount };
+
+    if (currentPhone) {
+      paymentParams.phone = currentPhone;
+    }
+    if (currentEmail) {
+      paymentParams.email = currentEmail;
+    }
+
+    const result = await handlePaymentConfirmation(paymentParams);
     setIsLoading(false);
     setPaymentResult(result);
 
@@ -66,18 +93,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       });
     }
   };
-
-  const paymentDetails: PaymentDetail[] = [
-    { label: "Ticket ID", value: ticketId, icon: Ticket },
-    { label: "Amount", value: amount ? `$${parseFloat(amount).toFixed(2)}` : undefined, icon: CreditCard },
-  ];
-
-  if (phone) {
-    paymentDetails.push({ label: "Phone", value: phone, icon: Phone });
-  }
-  if (email) {
-    paymentDetails.push({ label: "Email", value: email, icon: Mail });
-  }
   
   const renderPaymentStatus = () => {
     if (isLoading) {
@@ -97,7 +112,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
         </div>
       );
     }
-    if (paymentResult?.success === false && !showMissingParamsError) { // Don't show double error if params missing
+    if (paymentResult?.success === false && !showMissingParamsError) {
        return (
         <div className="flex flex-col items-center justify-center space-y-2 text-destructive">
           <XCircle className="h-12 w-12" />
@@ -109,6 +124,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     return null;
   };
 
+  const canEditContactInfo = !paymentResult?.success && !showMissingParamsError;
 
   return (
     <Card className="w-full max-w-md shadow-2xl">
@@ -129,21 +145,79 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           </Alert>
         )}
 
-        {!showMissingParamsError && paymentDetails.map((detail) => (
-          detail.value && (
-            <div key={detail.label} className="flex items-center justify-between p-3 bg-background/50 rounded-md border">
+        {!showMissingParamsError && (
+          <>
+            <div className="flex items-center justify-between p-3 bg-background/50 rounded-md border">
               <div className="flex items-center space-x-3">
-                <detail.icon className="h-5 w-5 text-primary" />
-                <Label htmlFor={detail.label.toLowerCase().replace(' ', '-')} className="text-base font-medium text-foreground/80">
-                  {detail.label}:
+                <Ticket className="h-5 w-5 text-primary" />
+                <Label htmlFor="ticket-id-display" className="text-base font-medium text-foreground/80">
+                  Ticket ID:
                 </Label>
               </div>
-              <span id={detail.label.toLowerCase().replace(' ', '-')} className="text-base font-semibold text-foreground">
-                {detail.value}
+              <span id="ticket-id-display" className="text-base font-semibold text-foreground">
+                {ticketId}
               </span>
             </div>
-          )
-        ))}
+
+            <div className="flex items-center justify-between p-3 bg-background/50 rounded-md border">
+              <div className="flex items-center space-x-3">
+                <CreditCard className="h-5 w-5 text-primary" />
+                <Label htmlFor="amount-display" className="text-base font-medium text-foreground/80">
+                  Amount:
+                </Label>
+              </div>
+              <span id="amount-display" className="text-base font-semibold text-foreground">
+                {amount ? `$${parseFloat(amount).toFixed(2)}` : 'N/A'}
+              </span>
+            </div>
+
+            {/* Phone Number */}
+            <div className="space-y-2">
+              <div className="flex items-center space-x-3">
+                <Phone className="h-5 w-5 text-primary" />
+                <Label htmlFor="phone-input" className="text-base font-medium text-foreground/80">
+                  Phone (Optional):
+                </Label>
+              </div>
+              {canEditContactInfo && !initialPhone ? (
+                <Input
+                  id="phone-input"
+                  type="tel"
+                  placeholder="Enter your phone number"
+                  value={currentPhone}
+                  onChange={(e) => setCurrentPhone(e.target.value)}
+                  className="text-base"
+                  disabled={isLoading || paymentResult?.success}
+                />
+              ) : (
+                <p className="text-base text-foreground pl-8">{currentPhone || 'Not provided'}</p>
+              )}
+            </div>
+
+            {/* Email Address */}
+            <div className="space-y-2">
+              <div className="flex items-center space-x-3">
+                <Mail className="h-5 w-5 text-primary" />
+                <Label htmlFor="email-input" className="text-base font-medium text-foreground/80">
+                  Email (Optional):
+                </Label>
+              </div>
+              {canEditContactInfo && !initialEmail ? (
+                <Input
+                  id="email-input"
+                  type="email"
+                  placeholder="Enter your email address"
+                  value={currentEmail}
+                  onChange={(e) => setCurrentEmail(e.target.value)}
+                  className="text-base"
+                  disabled={isLoading || paymentResult?.success}
+                />
+              ) : (
+                <p className="text-base text-foreground pl-8">{currentEmail || 'Not provided'}</p>
+              )}
+            </div>
+          </>
+        )}
         
         <div className="mt-6 min-h-[60px]">
           {renderPaymentStatus()}
@@ -172,7 +246,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
          )}
          {paymentResult?.success === false && !showMissingParamsError && (
             <Button
-            onClick={onConfirmPayment}
+            onClick={onConfirmPayment} // Retry uses the same logic
             disabled={isLoading || !ticketId || !amount}
             variant="outline"
             className="w-full text-lg py-6 mt-2 border-primary text-primary hover:bg-primary/10"

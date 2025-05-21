@@ -1,7 +1,9 @@
+
 "use server";
 
 import { z } from 'zod';
 import { db } from '@/lib/firebase'; // This will use the simulated DB if Firebase is not set up
+import { sendPaymentConfirmationEmail } from '@/lib/emailService';
 // import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore'; // Actual imports
 
 const PaymentSchema = z.object({
@@ -57,6 +59,10 @@ export async function handlePaymentConfirmation(
     // await updateDoc(ticketRef, { status: 'confirmed', lastPaymentAttempt: serverTimestamp() }); // Actual Firestore call
     await db.collection('tickets').doc(ticketId).updateDoc({ status: 'confirmed', lastPaymentAttempt: new Date().toISOString() }); // Simulated call
 
+    // Send confirmation email if email is provided
+    if (email) {
+      await sendPaymentConfirmationEmail(email, ticketId, amount, transactionRef.id);
+    }
 
     return {
       success: true,
@@ -65,9 +71,13 @@ export async function handlePaymentConfirmation(
     };
   } catch (error) {
     console.error("Payment confirmation error:", error);
+    let errorMessage = 'An error occurred while confirming the payment. Please try again.';
+    if (error instanceof Error) {
+        errorMessage = error.message;
+    }
     return {
       success: false,
-      message: 'An error occurred while confirming the payment. Please try again.',
+      message: errorMessage,
     };
   }
 }
