@@ -1,6 +1,5 @@
 
 import { PaymentDisplay } from '@/components/payment-display';
-import type { NextPage } from 'next';
 // Mountain icon is not used, removed to clean up.
 // import { Mountain } from 'lucide-react'; 
 
@@ -13,7 +12,7 @@ interface HomePageProps {
   };
 }
 
-const HomePage: NextPage<HomePageProps> = ({ searchParams }) => {
+export default async function HomePage({ searchParams }: HomePageProps) {
   const { ticketId, amount, phone, email } = searchParams;
 
   return (
@@ -57,6 +56,4 @@ const HomePage: NextPage<HomePageProps> = ({ searchParams }) => {
       </footer>
     </div>
   );
-};
-
-export default HomePage;
+}
