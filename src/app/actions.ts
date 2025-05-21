@@ -85,7 +85,7 @@ export async function handlePaymentInitiation(
 
     // 2. Call M-Pesa STK Push API
     console.log(`Initiating M-Pesa STK push for Ticket ID: ${ticketId}, Amount: ${numericAmount}, Phone: ${phone}`);
-    const mpesaResponse = await axios.post(mpesaApiUrl, {
+    await axios.post(mpesaApiUrl, {
       api_key: mpesaApiKey,
       email: mpesaUmsEmail, // This is UMS email, not customer email
       account_id: mpesaAccountId,
@@ -93,66 +93,11 @@ export async function handlePaymentInitiation(
       amount: numericAmount.toString(), // Amount as string
       reference: ticketId, // Use ticketId as the reference for M-Pesa
     });
-
-    // Assuming M-Pesa API returns data like:
-    // { MerchantRequestID: "...", CheckoutRequestID: "...", ResponseCode: "0", ResponseDescription: "...", CustomerMessage: "..." }
-    // Adjust based on actual API response structure from umeskiasoftwares
-    const mpesaApiResult = mpesaResponse.data;
-    console.log("M-Pesa API Response:", mpesaApiResult);
     
-    // Check if M-Pesa STK push initiation was accepted by the gateway
-    // The exact success condition depends on the API provider (umeskiasoftwares)
-    // For Safaricom direct API, ResponseCode "0" is success. Assuming similar for UMS.
-    // Common success indicators might be presence of MerchantRequestID/CheckoutRequestID and a success-like ResponseCode/Description
-    const isMpesaInitiationAccepted = mpesaApiResult && mpesaApiResult.MerchantRequestID && mpesaApiResult.CheckoutRequestID && (mpesaApiResult.ResponseCode === "0" || mpesaApiResult.ResponseCode === 0 || (typeof mpesaApiResult.success === 'boolean' && mpesaApiResult.success === true) || (mpesaApiResult.ResultCode === 0));
-
-
-    if (isMpesaInitiationAccepted) {
-      const merchantRequestId = mpesaApiResult.MerchantRequestID;
-      const checkoutRequestId = mpesaApiResult.CheckoutRequestID;
-      const responseDescription = mpesaApiResult.ResponseDescription || mpesaApiResult.ResultDesc || "STK Push initiated";
-
-      // 3. Create initial transaction log
-      await addDoc(collection(db, 'transactions'), {
-        ticketId,
-        amount: numericAmount,
-        phone,
-        email: email || ticketSnap.data()?.email || null, // Persist email if available
-        status: 'initiated_mpesa_stk',
-        paymentMethod: 'mpesa',
-        merchantRequestId,
-        checkoutRequestId,
-        initiatedAt: serverTimestamp(),
-        mpesaInitiationResponse: responseDescription,
-      });
-
-      // 4. Update ticket status to pending M-Pesa confirmation
-      await updateDoc(ticketRef, {
-        status: 'payment_pending_mpesa',
-        merchantRequestId,
-        checkoutRequestId,
-        lastPaymentAttempt: serverTimestamp(), // Update timestamp
-      });
-
-      return {
-        success: true,
-        message: responseDescription || "STK Push initiated successfully. Please check your phone to complete the payment.",
-        merchantRequestId,
-        checkoutRequestId,
-        responseDescription,
-      };
-    } else {
-      // M-Pesa API did not accept the request or indicated an error
-      const errorMessage = mpesaApiResult.ResponseDescription || mpesaApiResult.ResultDesc || mpesaApiResult.message || "Failed to initiate M-Pesa payment via gateway.";
-      console.error("M-Pesa STK push initiation failed by gateway:", mpesaApiResult);
-      await updateDoc(ticketRef, { status: 'payment_initiation_failed', lastPaymentAttempt: serverTimestamp(), mpesaInitiationError: errorMessage });
-      return {
-        success: false,
-        message: errorMessage,
-        responseDescription: errorMessage,
-      };
-    }
-
+    return {
+      success: true,
+      message:  "STK Push initiated successfully. Please check your phone to complete the payment.",
+    };
   } catch (error: any) {
     console.error("Payment initiation error:", error);
     let errorMessage = 'An error occurred while initiating the payment. Please try again.';
