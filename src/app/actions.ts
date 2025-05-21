@@ -50,7 +50,7 @@ export async function handlePaymentInitiation(
   const { ticketId, amount, phone, email } = validation.data;
   const numericAmount = parseFloat(amount);
 
-  const mpesaApiUrl = process.env.MPESA_API_URL || 'https://api.umeskiasoftwares.com/api/v1/intiatestk';
+  const mpesaApiUrl = process.env.MPESA_API_URL;
   const mpesaApiKey = process.env.MPESA_API_KEY;
   const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL;
   const mpesaAccountId = process.env.MPESA_ACCOUNT_ID;

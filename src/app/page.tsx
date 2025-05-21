@@ -1,7 +1,4 @@
-
 import { PaymentDisplay } from '@/components/payment-display';
-// Mountain icon is not used, removed to clean up.
-// import { Mountain } from 'lucide-react'; 
 
 interface HomePageProps {
   searchParams: {
