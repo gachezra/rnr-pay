@@ -85,7 +85,8 @@ export async function handlePaymentInitiation(
 
     // 2. Call M-Pesa STK Push API
     console.log(`Initiating M-Pesa STK push for Ticket ID: ${ticketId}, Amount: ${numericAmount}, Phone: ${phone}`);
-    await axios.post(mpesaApiUrl, {
+    // Await the axios.post call directly
+    const mpesaResponse = await axios.post(mpesaApiUrl, {
       api_key: mpesaApiKey,
       email: mpesaUmsEmail, // This is UMS email, not customer email
       account_id: mpesaAccountId,
@@ -93,10 +94,13 @@ export async function handlePaymentInitiation(
       amount: numericAmount.toString(), // Amount as string
       reference: ticketId, // Use ticketId as the reference for M-Pesa
     });
-    
+
+    console.log(mpesaResponse.data); // Log the actual response data from M-Pesa API
+
+    // If the axios call is successful (no error thrown), then return success
     return {
       success: true,
-      message:  "STK Push initiated successfully. Please check your phone to complete the payment.",
+      message: "STK Push initiated successfully. Please check your phone to complete the payment.",
     };
   } catch (error: any) {
     console.error("Payment initiation error:", error);
