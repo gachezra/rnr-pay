@@ -4,7 +4,8 @@
 import { z } from 'zod';
 import { db } from '@/lib/firebase'; // This will use the simulated DB if Firebase is not set up
 import { sendPaymentConfirmationEmail } from '@/lib/emailService';
-// import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore'; // Actual imports
+import { collection, addDoc, doc, updateDoc, serverTimestamp } from 'firebase/firestore'; // Actual imports
+import axios from 'axios';
 
 const PaymentSchema = z.object({
   ticketId: z.string().min(1, "Ticket ID is required"),
@@ -44,20 +45,27 @@ export async function handlePaymentConfirmation(
       amount: parseFloat(amount), // Store amount as number
       phone: phone || null,
       email: email || null,
-      status: 'confirmed', // Directly confirming for this app's purpose
-      // createdAt: serverTimestamp(), // Actual Firestore server timestamp
-      createdAt: new Date().toISOString(), // Simulated timestamp
-      paymentGatewayReference: `RNR_PAY_${Date.now()}` // Simulated reference
     };
 
     // Simulate adding to 'transactions' collection
-    // const transactionRef = await addDoc(collection(db, 'transactions'), transactionData); // Actual Firestore call
-    const transactionRef = await db.collection('transactions').addDoc(transactionData); // Simulated call
+    const transactionRef = await addDoc(collection(db, 'transactions'), transactionData); // Actual Firestore call
     
+    let url = 'https://api.umeskiasoftwares.com/api/v1/initiatestk';
+    let api = process.env.API_KEY;
+    let umsEmail = 'kipkoechgezra@gmail.com';
+    let account = process.env.ACCOUNT_ID;
+
+    const res = await axios.post(url, {
+      api_key: api,
+      email: umsEmail,
+      account_id: account,
+      msisdn: transactionData.phone,
+      amount: transactionData.amount,
+      reference: transactionData.ticketId
+    })
     // Simulate updating 'tickets' collection
-    // const ticketRef = doc(db, 'tickets', ticketId); // Actual Firestore call
-    // await updateDoc(ticketRef, { status: 'confirmed', lastPaymentAttempt: serverTimestamp() }); // Actual Firestore call
-    await db.collection('tickets').doc(ticketId).updateDoc({ status: 'confirmed', lastPaymentAttempt: new Date().toISOString() }); // Simulated call
+    const ticketRef = doc(db, 'tickets', ticketId); // Actual Firestore call
+    await updateDoc(ticketRef, { status: 'confirmed', lastPaymentAttempt: serverTimestamp() }); // Actual Firestore call
 
     // Send confirmation email if email is provided
     if (email) {
