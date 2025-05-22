@@ -280,7 +280,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                   try {
                     const docSnap = await getDoc(ticketDocRef);
                     if (docSnap.exists()) {
-                      const eventId = docSnap.data()?.eventId;
+                      const eventId = docSnap.data()?.id;
                       if (eventId) {
                         window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventId}`;
                       } else {
