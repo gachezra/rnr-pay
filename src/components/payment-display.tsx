@@ -12,7 +12,7 @@ import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, 
 import { handlePaymentInitiation, type PaymentInitiationResult, checkTransactionStatus, type TransactionStatusResult } from '@/app/actions';
 import { useToast } from "@/hooks/use-toast";
 import { db } from '@/lib/firebase';
-import { doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, DocumentData } from 'firebase/firestore';
 
 const MANUAL_ACTIONS_DELAY = 20000; // 20 seconds
 
@@ -58,29 +58,38 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     if (!ticketId || !amount) {
       setShowMissingParamsError(true);
       setPaymentInitiationResult({ success: false, message: "Ticket ID and Amount are required parameters." });
-      return; // Early exit if essential params are missing
+      return; 
     }
     
     setShowMissingParamsError(false);
     setPaymentInitiationResult(null); 
     
-    // Check initial ticket status from DB in case page was reloaded after confirmation
     const checkInitialStatus = async () => {
-      if (!ticketId) return; // Ensure ticketId is defined
+      if (!ticketId) return; 
       const ticketDocRef = doc(db, 'tickets', ticketId);
       try {
         const docSnap = await getDoc(ticketDocRef);
         if (docSnap.exists() && docSnap.data().status === 'confirmed') {
+          const ticketData = docSnap.data();
           setIsPaymentReallyConfirmed(true);
-          setRedirectMessage("Payment Previously Confirmed. Redirecting...");
-          // No toast here to avoid duplication if onSnapshot also fires
+          const eventIdForRedirect = ticketData.eventId;
+          if (eventIdForRedirect) {
+             setRedirectMessage(`Payment Previously Confirmed. Redirecting to event status for ${eventIdForRedirect}...`);
+          } else {
+             setRedirectMessage(`Payment Previously Confirmed for ticket ${docSnap.id}. Event ID missing for redirect.`);
+          }
         }
       } catch (error) {
         console.error("Error checking initial ticket status:", error);
+        toast({
+          title: "Error",
+          description: "Could not check initial ticket status. Please try refreshing.",
+          variant: "destructive",
+        });
       }
     };
     checkInitialStatus();
-  }, [ticketId, amount]);
+  }, [ticketId, amount, toast]);
 
   useEffect(() => {
     setCurrentPhone(initialPhone || '');
@@ -92,35 +101,51 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
   useEffect(() => {
     if (!ticketId) return;
-    if (isPaymentReallyConfirmed) return; // Don't set up listener if already confirmed by initial check
+    if (isPaymentReallyConfirmed) return; 
 
     const ticketDocRef = doc(db, 'tickets', ticketId);
     const unsubscribe = onSnapshot(ticketDocRef, (docSnap) => {
       if (docSnap.exists()) {
         const ticketData = docSnap.data();
-        if (ticketData.status === 'confirmed' && !isPaymentReallyConfirmed) { // Check isPaymentReallyConfirmed to prevent multiple triggers
+        if (ticketData.status === 'confirmed' && !isPaymentReallyConfirmed) { 
           setIsPaymentReallyConfirmed(true);
           resetManualActionsState();
-          setRedirectMessage("Payment Confirmed! Redirecting to your ticket status page...");
+          
+          const eventIdForRedirect = ticketData.eventId;
+          let confirmationMessage = `Payment Confirmed for ticket ${docSnap.id}!`;
+          if (eventIdForRedirect) {
+            confirmationMessage = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
+          } else {
+            confirmationMessage = `Payment Confirmed for ticket ${docSnap.id}! Event ID for redirect not found.`;
+             console.warn(`eventId field not found in ticket document ${docSnap.id} for redirect.`);
+          }
+          setRedirectMessage(confirmationMessage);
+
           toast({
             title: "Payment Confirmed!",
-            description: "Your payment has been successfully processed. You will be redirected shortly.",
+            description: `Your payment for ticket ${docSnap.id} has been successfully processed.`,
             className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800",
             duration: 5000,
           });
 
           if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
-          redirectTimerRef.current = setTimeout(() => {
-            // Use docSnap.id to ensure the ID from the confirmed Firestore document is used
-            window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${docSnap.id}`;
-          }, 3000);
+          
+          if (eventIdForRedirect) {
+            redirectTimerRef.current = setTimeout(() => {
+              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
+            }, 3000);
+          } else {
+            // Fallback or alternative action if eventId is not present
+            // For now, we'll just show the message and not redirect if eventId is missing.
+            console.warn(`No eventId found for ticket ${docSnap.id}, redirect will not occur automatically.`);
+          }
         }
       }
     }, (error) => {
       console.error("Error listening to ticket status:", error);
       toast({
         title: "Listener Error",
-        description: "Could not listen for real-time payment updates. Please try checking status manually.",
+        description: "Could not listen for real-time payment updates. Please try checking status manually or refresh.",
         variant: "destructive",
       })
     });
@@ -142,7 +167,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       toast({ title: "Phone Number Required", description: "Please enter your M-Pesa phone number.", variant: "destructive" });
       return;
     }
-     // More robust phone validation (allows 07..., 2547..., 01..., 2541... up to 12 digits for 254 prefix)
     if (!/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, ''))) {
         toast({ title: "Invalid Phone Format", description: "Use 07XXXXXXXX, 01XXXXXXXX, 2547XXXXXXXX or 2541XXXXXXXX.", variant: "destructive" });
         return;
@@ -204,9 +228,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setIsCheckingStatus(false);
     if (result.success && result.isConfirmed) {
       // Firestore onSnapshot will handle the UI update to confirmed state and redirect
-      // No need to set manualStatusMessage here as the main confirmation flow will take over.
-      // resetManualActionsState(); // Listener will pick up change and do this
-      // Toast for direct confirmation from status check is handled by the onSnapshot listener for consistency.
     } else {
       setManualStatusMessage(result.message || "Could not retrieve status or payment not confirmed.");
       if (result.success && !result.isConfirmed) { 
@@ -227,8 +248,28 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           <Button 
             variant="outline" 
             className="mt-2 border-primary text-primary hover:bg-primary/10"
-            onClick={() => {
-                if (ticketId) window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketId}`;
+            onClick={async () => {
+                if (ticketId) {
+                  const ticketDocRef = doc(db, 'tickets', ticketId);
+                  try {
+                    const docSnap = await getDoc(ticketDocRef);
+                    if (docSnap.exists()) {
+                      const eventId = docSnap.data()?.eventId;
+                      if (eventId) {
+                        window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventId}`;
+                      } else {
+                        window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketId}`; // Fallback to ticketId
+                        console.warn(`EventID not found for ticket ${ticketId}, redirecting with ticketId.`);
+                      }
+                    } else {
+                       console.error(`Ticket ${ticketId} not found for manual redirect.`);
+                       toast({title: "Error", description: "Ticket details not found for redirect.", variant: "destructive"});
+                    }
+                  } catch (e) {
+                    console.error("Error fetching eventId for manual redirect:", e);
+                    toast({title: "Error", description: "Could not fetch details for redirect.", variant: "destructive"});
+                  }
+                }
             }}
           >
             Go to Ticket Status Now <ExternalLink className="ml-2 h-4 w-4"/>
@@ -292,7 +333,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   };
 
   const canDisableInputs = isLoading || paymentInitiationResult?.success === true || isPaymentReallyConfirmed || isCheckingStatus;
-  const showInitialPaymentButton = !paymentInitiationResult && !paymentInitiationResult?.success && !showMissingParamsError && !isPaymentReallyConfirmed;
+  const showInitialPaymentButton = !paymentInitiationResult && !showMissingParamsError && !isPaymentReallyConfirmed;
   const showRetryButtonAfterFail = paymentInitiationResult?.success === false && !showMissingParamsError && !isPaymentReallyConfirmed;
 
 
@@ -415,7 +456,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
             <RefreshCw className="mr-2 h-4 w-4" /> Retry Payment Initiation
           </Button>
          )}
-          {isPaymentReallyConfirmed && !redirectMessage && ( // Show message if confirmed but redirect not yet active
+          {isPaymentReallyConfirmed && !redirectMessage && ( 
              <p className="text-sm text-green-600 dark:text-green-400 mt-4 text-center">
                 Your payment is confirmed! Preparing your ticket information...
              </p>
@@ -424,3 +465,4 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     </Card>
   );
 };
+
