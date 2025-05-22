@@ -1,16 +1,17 @@
-
 "use client";
 
 import type { FC } from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, ExternalLink } from 'lucide-react';
 import { handlePaymentInitiation, type PaymentInitiationResult } from '@/app/actions';
 import { useToast } from "@/hooks/use-toast";
+import { db } from '@/lib/firebase'; // Import Firestore instance
+import { doc, onSnapshot } from 'firebase/firestore'; // Import Firestore listener functions
 
 interface PaymentDisplayProps {
   ticketId?: string;
@@ -24,9 +25,12 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   const [paymentInitiationResult, setPaymentInitiationResult] = useState<PaymentInitiationResult | null>(null);
   const [showMissingParamsError, setShowMissingParamsError] = useState(false);
   
-  // Editable phone and email states
   const [currentPhone, setCurrentPhone] = useState(initialPhone || '');
   const [currentEmail, setCurrentEmail] = useState(initialEmail || '');
+
+  const [isPaymentReallyConfirmed, setIsPaymentReallyConfirmed] = useState(false);
+  const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
+  const redirectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { toast } = useToast();
 
@@ -48,6 +52,43 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setCurrentEmail(initialEmail || '');
   }, [initialEmail]);
 
+  // Firestore listener for real-time payment status updates
+  useEffect(() => {
+    if (!ticketId) return;
+
+    const ticketDocRef = doc(db, 'tickets', ticketId);
+    const unsubscribe = onSnapshot(ticketDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const ticketData = docSnap.data();
+        if (ticketData.status === 'confirmed' && !isPaymentReallyConfirmed) {
+          setIsPaymentReallyConfirmed(true);
+          setRedirectMessage("Payment Confirmed! Redirecting to your ticket status page...");
+          toast({
+            title: "Payment Confirmed!",
+            description: "Your payment has been successfully processed. You will be redirected shortly.",
+            className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800", // Custom success styling
+            duration: 5000, // Keep toast longer
+          });
+
+          if (redirectTimerRef.current) {
+            clearTimeout(redirectTimerRef.current);
+          }
+          redirectTimerRef.current = setTimeout(() => {
+            window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketId}`;
+          }, 3000); // 3-second delay for redirect
+        }
+      }
+    });
+
+    // Cleanup listener on component unmount or when ticketId changes
+    return () => {
+      unsubscribe();
+      if (redirectTimerRef.current) {
+        clearTimeout(redirectTimerRef.current);
+      }
+    };
+  }, [ticketId, toast, isPaymentReallyConfirmed]); // isPaymentReallyConfirmed ensures we don't re-setup redirect logic if already confirmed
+
 
   const onInitiatePayment = async () => {
     if (!ticketId || !amount) {
@@ -67,7 +108,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       return;
     }
 
-
     setIsLoading(true);
     setPaymentInitiationResult(null);
 
@@ -86,7 +126,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       toast({
         title: "STK Push Sent!",
         description: result.message || "Please check your phone to complete the payment. You'll be notified of the outcome.",
-        className: "bg-blue-500 text-white", // Custom styling for info toast
+        className: "bg-blue-600 dark:bg-blue-700 text-white border-blue-700 dark:border-blue-800",
       });
     } else {
       toast({
@@ -98,6 +138,23 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   };
   
   const renderPaymentStatus = () => {
+    if (isPaymentReallyConfirmed && redirectMessage) {
+      return (
+        <div className="flex flex-col items-center justify-center space-y-3 text-green-600 dark:text-green-400 p-4 border border-green-500 rounded-md bg-green-50 dark:bg-green-900/30 shadow-lg">
+          <CheckCircle2 className="h-12 w-12" />
+          <span className="text-xl font-semibold text-center">Payment Confirmed!</span>
+          <p className="text-sm text-muted-foreground text-center px-2">{redirectMessage}</p>
+          <Button 
+            variant="outline" 
+            className="mt-2 border-primary text-primary hover:bg-primary/10"
+            onClick={() => window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketId}`}
+          >
+            Go to Ticket Status Now <ExternalLink className="ml-2 h-4 w-4"/>
+          </Button>
+        </div>
+      );
+    }
+
     if (isLoading) {
       return (
         <div className="flex items-center justify-center space-x-2 text-primary">
@@ -106,32 +163,33 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
         </div>
       );
     }
+    // This message is for successful STK PUSH INITIATION
     if (paymentInitiationResult?.success === true) {
       return (
-        <div className="flex flex-col items-center justify-center space-y-3 text-green-600 dark:text-green-400 p-4 border border-green-500 rounded-md bg-green-50 dark:bg-green-900/30">
-          <Info className="h-12 w-12 text-blue-500" /> {/* Changed icon */}
+        <div className="flex flex-col items-center justify-center space-y-3 text-blue-600 dark:text-blue-400 p-4 border border-blue-500 rounded-md bg-blue-50 dark:bg-blue-900/30 shadow-md">
+          <Info className="h-12 w-12" />
           <span className="text-xl font-semibold text-center">STK Push Sent Successfully!</span>
           <p className="text-sm text-muted-foreground text-center px-2">{paymentInitiationResult.message || "Please check your M-Pesa phone to enter your PIN and complete the payment."}</p>
-          <p className="text-xs text-muted-foreground text-center mt-2">You will receive a confirmation once the payment is processed by M-Pesa.</p>
+          <p className="text-xs text-muted-foreground text-center mt-2">Waiting for M-Pesa to confirm the transaction. This page will update automatically.</p>
         </div>
       );
     }
-    if (paymentInitiationResult?.success === false && !showMissingParamsError) { // Don't show if it's a missing param error
+    // This message is for FAILED STK PUSH INITIATION
+    if (paymentInitiationResult?.success === false && !showMissingParamsError) {
        return (
-        <div className="flex flex-col items-center justify-center space-y-2 text-destructive p-4 border border-destructive rounded-md bg-red-50 dark:bg-red-900/30">
+        <div className="flex flex-col items-center justify-center space-y-2 text-destructive p-4 border border-destructive rounded-md bg-red-50 dark:bg-red-900/30 shadow-md">
           <XCircle className="h-12 w-12" />
           <span className="text-xl font-semibold">Initiation Failed</span>
           {paymentInitiationResult.message && <p className="text-sm text-center">{paymentInitiationResult.message}</p>}
         </div>
       );
     }
-    return null; // Default state, no message or before any action
+    return null; 
   };
 
-  // Can edit contact info if payment hasn't been successfully initiated OR if there are missing params
-  const canEditContactInfo = (!paymentInitiationResult?.success || showMissingParamsError);
-  const showPaymentButton = !paymentInitiationResult?.success && !showMissingParamsError;
-  const showRetryButton = paymentInitiationResult?.success === false && !showMissingParamsError;
+  const canEditContactInfo = (!paymentInitiationResult?.success || showMissingParamsError) && !isPaymentReallyConfirmed;
+  const showPaymentButton = !paymentInitiationResult?.success && !showMissingParamsError && !isPaymentReallyConfirmed;
+  const showRetryButton = paymentInitiationResult?.success === false && !showMissingParamsError && !isPaymentReallyConfirmed;
 
 
   return (
@@ -179,7 +237,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
               </span>
             </div>
 
-            {/* Phone Number - Now always editable before first initiation attempt */}
             <div className="space-y-2">
               <div className="flex items-center space-x-3">
                 <Phone className="h-5 w-5 text-primary" />
@@ -194,15 +251,14 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                 value={currentPhone}
                 onChange={(e) => setCurrentPhone(e.target.value)}
                 className="text-base bg-input text-foreground placeholder:text-muted-foreground"
-                disabled={isLoading || paymentInitiationResult?.success === true}
+                disabled={isLoading || paymentInitiationResult?.success === true || isPaymentReallyConfirmed}
                 required
               />
-               {currentPhone && !/^\d{10,12}$/.test(currentPhone) && (
+               {currentPhone && !/^\d{10,12}$/.test(currentPhone) && !isPaymentReallyConfirmed && (
                  <p className="text-xs text-destructive pl-8">Enter a valid phone number (e.g. 2547... or 07...).</p>
                )}
             </div>
 
-            {/* Email Address - Optional, always editable before first initiation */}
             <div className="space-y-2">
               <div className="flex items-center space-x-3">
                 <Mail className="h-5 w-5 text-primary" />
@@ -217,16 +273,16 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                 value={currentEmail}
                 onChange={(e) => setCurrentEmail(e.target.value)}
                 className="text-base bg-input text-foreground placeholder:text-muted-foreground"
-                disabled={isLoading || paymentInitiationResult?.success === true}
+                disabled={isLoading || paymentInitiationResult?.success === true || isPaymentReallyConfirmed}
               />
-               {currentEmail && !/\S+@\S+\.\S+/.test(currentEmail) && (
+               {currentEmail && !/\S+@\S+\.\S+/.test(currentEmail) && !isPaymentReallyConfirmed &&(
                  <p className="text-xs text-destructive pl-8">Enter a valid email address.</p>
                )}
             </div>
           </>
         )}
         
-        <div className="mt-6 min-h-[80px] flex items-center justify-center">
+        <div className="mt-6 min-h-[100px] flex items-center justify-center"> {/* Increased min-h for new message */}
           {renderPaymentStatus()}
         </div>
 
@@ -235,7 +291,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
         {showPaymentButton && (
           <Button
             onClick={onInitiatePayment}
-            disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^\d{10,12}$/.test(currentPhone)) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) }
+            disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^\d{10,12}$/.test(currentPhone)) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed }
             className="w-full text-lg py-3 sm:py-4 bg-primary hover:bg-accent transition-all duration-300 ease-in-out transform hover:scale-105 rounded-md shadow-md"
             aria-label="Initiate M-Pesa Payment"
           >
@@ -248,13 +304,10 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
             )}
           </Button>
         )}
-         {paymentInitiationResult?.success === true && (
-           <p className="text-sm text-muted-foreground mt-4 text-center">Waiting for M-Pesa confirmation. Do not close this page yet.</p>
-         )}
          {showRetryButton && (
             <Button
-            onClick={onInitiatePayment} // Retry uses the same logic
-            disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^\d{10,12}$/.test(currentPhone)) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail))}
+            onClick={onInitiatePayment} 
+            disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^\d{10,12}$/.test(currentPhone)) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed}
             variant="outline"
             className="w-full text-lg py-3 sm:py-4 mt-2 border-primary text-primary hover:bg-primary/10 rounded-md shadow-sm"
             aria-label="Retry Payment Initiation"
@@ -262,7 +315,13 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
             Retry Payment Initiation
           </Button>
          )}
+          {isPaymentReallyConfirmed && (
+             <p className="text-sm text-green-600 dark:text-green-400 mt-4 text-center">
+                Your payment is confirmed! Taking you to your ticket...
+             </p>
+         )}
       </CardFooter>
     </Card>
   );
 };
+
