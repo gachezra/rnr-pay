@@ -8,13 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, ExternalLink, AlertTriangle, RefreshCw, Search } from 'lucide-react';
+import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, ExternalLink, AlertTriangle, RefreshCw, Search, Copy, Check } from 'lucide-react';
 import { handlePaymentInitiation, type PaymentInitiationResult, checkTransactionStatus, type TransactionStatusResult } from '@/app/actions';
 import { useToast } from "@/hooks/use-toast";
 import { db } from '@/lib/firebase';
 import { doc, onSnapshot, getDoc, DocumentData } from 'firebase/firestore';
 
 const MANUAL_ACTIONS_DELAY = 20000; // 20 seconds
+const MPESA_GREEN = "#00A651";
 
 interface PaymentDisplayProps {
   ticketId?: string;
@@ -40,9 +41,22 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [manualStatusMessage, setManualStatusMessage] = useState<string | null>(null);
   const [umeskiaTransactionRequestIdForStatusCheck, setUmeskiaTransactionRequestIdForStatusCheck] = useState<string | undefined>(undefined);
-
+  const [ticketCopied, setTicketCopied] = useState(false);
 
   const { toast } = useToast();
+
+  const handleCopyTicketId = () => {
+    if (ticketId) {
+      navigator.clipboard.writeText(ticketId).then(() => {
+        setTicketCopied(true);
+        toast({ title: "Copied!", description: "Ticket ID copied to clipboard.", className: "bg-green-600 border-green-700 text-white dark:bg-green-700 dark:border-green-800" });
+        setTimeout(() => setTicketCopied(false), 2000);
+      }).catch(err => {
+        console.error('Failed to copy Ticket ID: ', err);
+        toast({ title: "Copy Error", description: "Could not copy Ticket ID.", variant: "destructive" });
+      });
+    }
+  };
 
   const resetManualActionsState = useCallback(() => {
     if (manualActionsTimerRef.current) {
@@ -74,10 +88,21 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           setIsPaymentReallyConfirmed(true);
           const eventIdForRedirect = ticketData.eventId;
           if (eventIdForRedirect) {
-             setRedirectMessage(`Payment Previously Confirmed. Redirecting to event status for ${eventIdForRedirect}...`);
+             setRedirectMessage(`Payment previously confirmed. Redirecting to event status for ${eventIdForRedirect}...`);
           } else {
-             setRedirectMessage(`Payment Previously Confirmed for ticket ${docSnap.id}. Event ID missing for redirect.`);
+             setRedirectMessage(`Payment previously confirmed for ticket ${docSnap.id}.`);
           }
+           // Start redirect timer immediately for previously confirmed
+           if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+           if (eventIdForRedirect) {
+            redirectTimerRef.current = setTimeout(() => {
+              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
+            }, 3000);
+           } else {
+            redirectTimerRef.current = setTimeout(() => {
+              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${docSnap.id}`;
+            }, 3000);
+           }
         }
       } catch (error) {
         console.error("Error checking initial ticket status:", error);
@@ -116,8 +141,8 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           if (eventIdForRedirect) {
             confirmationMessage = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
           } else {
-            confirmationMessage = `Payment Confirmed for ticket ${docSnap.id}! Event ID for redirect not found.`;
-             console.warn(`eventId field not found in ticket document ${docSnap.id} for redirect.`);
+            confirmationMessage = `Payment Confirmed for ticket ${docSnap.id}!`;
+             console.warn(`eventId field not found in ticket document ${docSnap.id} for redirect. Redirecting with ticket ID.`);
           }
           setRedirectMessage(confirmationMessage);
 
@@ -135,9 +160,9 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
               window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
             }, 3000);
           } else {
-            // Fallback or alternative action if eventId is not present
-            // For now, we'll just show the message and not redirect if eventId is missing.
-            console.warn(`No eventId found for ticket ${docSnap.id}, redirect will not occur automatically.`);
+            redirectTimerRef.current = setTimeout(() => {
+              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${docSnap.id}`;
+            }, 3000);
           }
         }
       }
@@ -228,6 +253,8 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setIsCheckingStatus(false);
     if (result.success && result.isConfirmed) {
       // Firestore onSnapshot will handle the UI update to confirmed state and redirect
+      // Explicitly set message if one is returned
+      setManualStatusMessage(result.message || "Payment confirmed by status check.");
     } else {
       setManualStatusMessage(result.message || "Could not retrieve status or payment not confirmed.");
       if (result.success && !result.isConfirmed) { 
@@ -241,10 +268,9 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   const renderPaymentStatus = () => {
     if (isPaymentReallyConfirmed && redirectMessage) {
       return (
-        <div className="flex flex-col items-center justify-center space-y-3 text-green-600 dark:text-green-400 p-4 border border-green-500 rounded-md bg-green-50 dark:bg-green-900/30 shadow-lg">
-          <CheckCircle2 className="h-12 w-12" />
-          <span className="text-xl font-semibold text-center">Payment Confirmed!</span>
-          <p className="text-sm text-muted-foreground text-center px-2">{redirectMessage}</p>
+        <div className="flex flex-col items-center justify-center space-y-3 text-center">
+          <CheckCircle2 className="h-12 w-12 mx-auto text-green-500" />
+          <p className="text-lg font-semibold text-foreground">{redirectMessage}</p>
           <Button 
             variant="outline" 
             className="mt-2 border-primary text-primary hover:bg-primary/10"
@@ -258,15 +284,12 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                       if (eventId) {
                         window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventId}`;
                       } else {
-                        window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketId}`; // Fallback to ticketId
-                        console.warn(`EventID not found for ticket ${ticketId}, redirecting with ticketId.`);
+                        window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${docSnap.id}`; 
                       }
                     } else {
-                       console.error(`Ticket ${ticketId} not found for manual redirect.`);
                        toast({title: "Error", description: "Ticket details not found for redirect.", variant: "destructive"});
                     }
                   } catch (e) {
-                    console.error("Error fetching eventId for manual redirect:", e);
                     toast({title: "Error", description: "Could not fetch details for redirect.", variant: "destructive"});
                   }
                 }
@@ -280,36 +303,36 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
     if (isLoading) {
       return (
-        <div className="flex items-center justify-center space-x-2 text-primary">
-          <Loader2 className="h-8 w-8 animate-spin" />
-          <span className="text-lg font-medium">Initiating M-Pesa Payment...</span>
+        <div className="flex flex-col items-center justify-center space-y-2 text-center">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
+          <span className="text-lg font-medium text-muted-foreground">Initiating M-Pesa Payment...</span>
         </div>
       );
     }
 
     if (paymentInitiationResult?.success === true) { 
       return (
-        <div className="flex flex-col items-center justify-center space-y-3 p-4">
-            <div className="flex items-center space-x-2 text-blue-600 dark:text-blue-400">
+        <div className="flex flex-col items-center justify-center space-y-4 p-4 text-center">
+            <div className="flex items-center space-x-2 text-blue-500">
               <Info className="h-10 w-10" />
-              <span className="text-lg font-semibold text-center">STK Push Sent Successfully!</span>
+              <span className="text-xl font-semibold">STK Push Sent!</span>
             </div>
-          <p className="text-sm text-muted-foreground text-center px-2">{paymentInitiationResult.message || "Please check your M-Pesa phone to enter your PIN."}</p>
-          <div className="mt-3 p-3 bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-400 dark:border-yellow-700 rounded-md text-yellow-700 dark:text-yellow-300">
+          <p className="text-base text-muted-foreground">{paymentInitiationResult.message || "Please check your M-Pesa phone to enter your PIN."}</p>
+          <div className="mt-3 p-3 bg-yellow-100 dark:bg-yellow-900/30 border border-yellow-500 dark:border-yellow-700 rounded-md text-yellow-700 dark:text-yellow-400 w-full">
             <div className="flex items-center space-x-2">
-                <AlertTriangle className="h-5 w-5"/>
+                <AlertTriangle className="h-5 w-5 flex-shrink-0"/>
                 <span className="font-medium text-sm">Important: Do not close or refresh this page.</span>
             </div>
             <p className="text-xs mt-1">We are waiting for M-Pesa to confirm your transaction. This page will update automatically.</p>
           </div>
           {showManualActions && (
-            <div className="mt-4 space-y-3 w-full">
-              <p className="text-xs text-muted-foreground text-center">If you've completed on your phone but the page hasn't updated, you can:</p>
-              <Button onClick={handleCheckStatus} disabled={isCheckingStatus || isLoading} className="w-full" variant="outline">
+            <div className="mt-6 space-y-3 w-full max-w-xs mx-auto">
+              <p className="text-sm text-muted-foreground">If you've completed on your phone but the page hasn't updated, you can:</p>
+              <Button onClick={handleCheckStatus} disabled={isCheckingStatus || isLoading} className="w-full bg-secondary hover:bg-secondary/80 text-secondary-foreground">
                 {isCheckingStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
                 Check Transaction Status
               </Button>
-              <Button onClick={onInitiatePayment} disabled={isLoading || isCheckingStatus} className="w-full" variant="secondary">
+              <Button onClick={onInitiatePayment} disabled={isLoading || isCheckingStatus} className="w-full" variant="outline">
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Retry STK Push
               </Button>
@@ -322,10 +345,10 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
     if (paymentInitiationResult?.success === false && !showMissingParamsError) { 
        return (
-        <div className="flex flex-col items-center justify-center space-y-2 text-destructive p-4 border border-destructive rounded-md bg-red-50 dark:bg-red-900/30 shadow-md">
-          <XCircle className="h-12 w-12" />
+        <div className="flex flex-col items-center justify-center space-y-3 text-destructive p-4 border border-destructive rounded-md bg-red-50 dark:bg-red-900/30 shadow-md text-center">
+          <XCircle className="h-12 w-12 mx-auto" />
           <span className="text-xl font-semibold">Initiation Failed</span>
-          {paymentInitiationResult.message && <p className="text-sm text-center">{paymentInitiationResult.message}</p>}
+          {paymentInitiationResult.message && <p className="text-base">{paymentInitiationResult.message}</p>}
         </div>
       );
     }
@@ -338,131 +361,138 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
 
   return (
-    <Card className="w-full max-w-md shadow-2xl bg-card text-card-foreground rounded-xl">
-      <CardHeader className="pb-4">
-        <CardTitle className="text-3xl font-bold text-center text-primary">M-Pesa Payment</CardTitle>
-        <CardDescription className="text-center text-muted-foreground">
-          Review details and confirm to initiate STK push.
-        </CardDescription>
+    <Card className="w-full max-w-lg shadow-2xl bg-card text-card-foreground rounded-xl border-border">
+      <CardHeader className="pb-4 pt-6">
+        <CardTitle className="text-3xl sm:text-4xl font-bold text-center text-foreground">M-Pesa Payment</CardTitle>
+        {!isPaymentReallyConfirmed && (
+            <CardDescription className="text-center text-muted-foreground pt-1 text-sm sm:text-base">
+            Review details and confirm to initiate STK push.
+            </CardDescription>
+        )}
       </CardHeader>
-      <CardContent className="space-y-6">
+      <CardContent className="space-y-6 px-4 sm:px-6 py-6">
         {showMissingParamsError && (
           <Alert variant="destructive" className="mb-4">
-            <XCircle className="h-4 w-4" />
-            <AlertTitle>Missing Information</AlertTitle>
+            <XCircle className="h-5 w-5" />
+            <AlertTitle className="font-semibold">Missing Information</AlertTitle>
             <AlertDescription>
               Ticket ID and Amount are required. Please check the URL or contact support.
             </AlertDescription>
           </Alert>
         )}
 
-        {!showMissingParamsError && (
+        {!showMissingParamsError && !isPaymentReallyConfirmed && (
           <>
-            <div className="flex items-center justify-between p-3 bg-secondary/30 dark:bg-secondary/50 rounded-md border">
-              <div className="flex items-center space-x-3">
-                <Ticket className="h-5 w-5 text-primary" />
-                <Label htmlFor="ticket-id-display" className="text-base font-medium text-foreground/80">
-                  Ticket ID:
-                </Label>
+            <div className="space-y-2 p-3 bg-secondary/30 dark:bg-secondary/50 rounded-lg border border-border/50">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <Ticket className="h-5 w-5 text-primary" />
+                  <Label htmlFor="ticket-id-display" className="text-sm font-medium text-foreground/80">
+                    Ticket ID:
+                  </Label>
+                </div>
+                 <Button variant="ghost" size="sm" onClick={handleCopyTicketId} className="p-1 h-auto text-muted-foreground hover:text-primary">
+                  {ticketCopied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+                </Button>
               </div>
-              <span id="ticket-id-display" className="text-base font-semibold text-foreground">
+              <span id="ticket-id-display" className="block text-base sm:text-lg font-mono text-foreground break-all">
                 {ticketId}
               </span>
             </div>
 
-            <div className="flex items-center justify-between p-3 bg-secondary/30 dark:bg-secondary/50 rounded-md border">
-              <div className="flex items-center space-x-3">
+            <div className="space-y-1 p-3 bg-secondary/30 dark:bg-secondary/50 rounded-lg border border-border/50">
+              <div className="flex items-center space-x-2">
                 <CreditCard className="h-5 w-5 text-primary" />
-                <Label htmlFor="amount-display" className="text-base font-medium text-foreground/80">
+                <Label htmlFor="amount-display" className="text-sm font-medium text-foreground/80">
                   Amount (KES):
                 </Label>
               </div>
-              <span id="amount-display" className="text-base font-semibold text-foreground">
+              <span id="amount-display" className="block text-2xl sm:text-3xl font-bold text-foreground">
                 {amount ? `${parseFloat(amount).toFixed(2)}` : 'N/A'}
               </span>
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
                 <Phone className="h-5 w-5 text-primary" />
-                <Label htmlFor="phone-input" className="text-base font-medium text-foreground/80">
-                  M-Pesa Phone: <span className="text-destructive">*</span>
+                <Label htmlFor="phone-input" className="text-sm font-medium text-foreground/80">
+                  M-Pesa Phone <span className="text-destructive">*</span>
                 </Label>
               </div>
               <Input
                 id="phone-input"
                 type="tel"
-                placeholder="e.g., 07XX XXX XXX or 2547XX XXX XXX"
+                placeholder="e.g. 0712345678 or 254712345678"
                 value={currentPhone}
                 onChange={(e) => setCurrentPhone(e.target.value)}
-                className="text-base bg-input text-foreground placeholder:text-muted-foreground"
+                className="text-base py-2.5 bg-input border-input focus:border-primary placeholder:text-muted-foreground/70"
                 disabled={canDisableInputs}
                 required
+                aria-required="true"
               />
                {currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) && !isPaymentReallyConfirmed &&(
-                 <p className="text-xs text-destructive pl-1">Use a valid M-Pesa phone format.</p>
+                 <p className="text-xs text-destructive pl-1 pt-1">Use a valid M-Pesa phone format.</p>
                )}
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
                 <Mail className="h-5 w-5 text-primary" />
-                <Label htmlFor="email-input" className="text-base font-medium text-foreground/80">
-                  Email (For Receipt):
+                <Label htmlFor="email-input" className="text-sm font-medium text-foreground/80">
+                  Email (For Receipt)
                 </Label>
               </div>
               <Input
                 id="email-input"
                 type="email"
-                placeholder="your@email.com (Optional)"
+                placeholder="your.email@example.com (Optional)"
                 value={currentEmail}
                 onChange={(e) => setCurrentEmail(e.target.value)}
-                className="text-base bg-input text-foreground placeholder:text-muted-foreground"
+                className="text-base py-2.5 bg-input border-input focus:border-primary placeholder:text-muted-foreground/70"
                 disabled={canDisableInputs}
               />
                {currentEmail && !/\S+@\S+\.\S+/.test(currentEmail) && !isPaymentReallyConfirmed &&(
-                 <p className="text-xs text-destructive pl-1">Enter a valid email address.</p>
+                 <p className="text-xs text-destructive pl-1 pt-1">Enter a valid email address.</p>
                )}
             </div>
           </>
         )}
         
-        <div className="mt-6 min-h-[120px] flex items-center justify-center">
+        <div className="mt-6 min-h-[100px] flex items-center justify-center">
           {renderPaymentStatus()}
         </div>
 
       </CardContent>
-      <CardFooter className="flex flex-col items-center pt-4">
-        {showInitialPaymentButton && (
-          <Button
-            onClick={onInitiatePayment}
-            disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) ) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed }
-            className="w-full text-lg py-3 sm:py-4 bg-primary hover:bg-accent transition-all duration-300 ease-in-out transform hover:scale-105 rounded-md shadow-md"
-            aria-label="Initiate M-Pesa Payment"
-          >
-            {isLoading ? (
-              <> <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Processing... </>
-            ) : ( 'Pay with M-Pesa' )}
-          </Button>
-        )}
-         {showRetryButtonAfterFail && (
+      {!isPaymentReallyConfirmed && (
+        <CardFooter className="flex flex-col items-center pt-2 pb-6 px-4 sm:px-6">
+          {showInitialPaymentButton && (
             <Button
-            onClick={onInitiatePayment} 
-            disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) ) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed}
-            variant="outline"
-            className="w-full text-lg py-3 sm:py-4 mt-2 border-primary text-primary hover:bg-primary/10 rounded-md shadow-sm"
-            aria-label="Retry Payment Initiation"
-          >
-            <RefreshCw className="mr-2 h-4 w-4" /> Retry Payment Initiation
-          </Button>
-         )}
-          {isPaymentReallyConfirmed && !redirectMessage && ( 
-             <p className="text-sm text-green-600 dark:text-green-400 mt-4 text-center">
-                Your payment is confirmed! Preparing your ticket information...
-             </p>
-         )}
-      </CardFooter>
+              onClick={onInitiatePayment}
+              disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) ) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed }
+              className="w-full text-lg py-3 sm:py-4 text-white hover:opacity-90 transition-all duration-300 ease-in-out transform hover:scale-105 rounded-lg shadow-md"
+              style={{ backgroundColor: MPESA_GREEN }}
+              aria-label="Initiate M-Pesa Payment"
+            >
+              {isLoading ? (
+                <> <Loader2 className="mr-2 h-5 w-5 animate-spin" /> Processing... </>
+              ) : ( 'Pay with M-Pesa' )}
+            </Button>
+          )}
+          {showRetryButtonAfterFail && (
+              <Button
+              onClick={onInitiatePayment} 
+              disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) ) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed}
+              style={{ backgroundColor: MPESA_GREEN }}
+              className="w-full text-lg py-3 sm:py-4 mt-2 text-white hover:opacity-90 rounded-lg shadow-sm"
+              aria-label="Retry Payment Initiation"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" /> Retry Payment Initiation
+            </Button>
+          )}
+        </CardFooter>
+      )}
     </Card>
   );
 };
 
+    
