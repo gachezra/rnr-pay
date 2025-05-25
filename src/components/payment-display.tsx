@@ -96,11 +96,11 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
            if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
            if (eventIdForRedirect) {
             redirectTimerRef.current = setTimeout(() => {
-              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
+              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${eventIdForRedirect}`, '_blank');
             }, 3000);
            } else {
             redirectTimerRef.current = setTimeout(() => {
-              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${docSnap.id}`;
+              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${docSnap.id}`, '_blank');
             }, 3000);
            }
         }
@@ -157,11 +157,11 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           
           if (eventIdForRedirect) {
             redirectTimerRef.current = setTimeout(() => {
-              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
+              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${eventIdForRedirect}`, '_blank');
             }, 3000);
           } else {
             redirectTimerRef.current = setTimeout(() => {
-              window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${docSnap.id}`;
+              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${docSnap.id}`, '_blank');
             }, 3000);
           }
         }
@@ -273,7 +273,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           <p className="text-lg font-semibold text-foreground">{redirectMessage}</p>
           <Button 
             variant="outline" 
-            className="mt-2 border-primary text-primary hover:bg-primary/10"
+            className="mt-2 border-primary hover:bg-primary/10"
             onClick={async () => {
                 if (ticketId) {
                   const ticketDocRef = doc(db, 'tickets', ticketId);
@@ -282,9 +282,9 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                     if (docSnap.exists()) {
                       const eventId = docSnap.data()?.id;
                       if (eventId) {
-                        window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventId}`;
+                        window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${eventId}`, '_blank');
                       } else {
-                        window.location.href = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${docSnap.id}`; 
+                        window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${docSnap.id}`, '_blank');
                       }
                     } else {
                        toast({title: "Error", description: "Ticket details not found for redirect.", variant: "destructive"});
@@ -295,7 +295,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                 }
             }}
           >
-            Go to Ticket Status Now <ExternalLink className="ml-2 h-4 w-4"/>
+            Go to Ticket Status Now <ExternalLink className="ml-1 h-4 w-4"/>
           </Button>
         </div>
       );
