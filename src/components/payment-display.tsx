@@ -12,7 +12,7 @@ import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, 
 import { handlePaymentInitiation, type PaymentInitiationResult, checkTransactionStatus, type TransactionStatusResult } from '@/app/actions';
 import { useToast } from "@/hooks/use-toast";
 import { db } from '@/lib/firebase';
-import { doc, onSnapshot, getDoc, DocumentData } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc } from 'firebase/firestore';
 
 const MANUAL_ACTIONS_DELAY = 20000; // 20 seconds
 const MPESA_GREEN = "#00A651";
@@ -35,12 +35,13 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   const [isPaymentReallyConfirmed, setIsPaymentReallyConfirmed] = useState(false);
   const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
   const redirectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  
   const manualActionsTimerRef = useRef<NodeJS.Timeout | null>(null);
-
   const [showManualActions, setShowManualActions] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [manualStatusMessage, setManualStatusMessage] = useState<string | null>(null);
   const [umeskiaTransactionRequestIdForStatusCheck, setUmeskiaTransactionRequestIdForStatusCheck] = useState<string | undefined>(undefined);
+  
   const [ticketCopied, setTicketCopied] = useState(false);
 
   const { toast } = useToast();
@@ -68,13 +69,46 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setIsCheckingStatus(false);
   }, []);
 
+  const performRedirect = useCallback(async (confirmedTicketId: string) => {
+    const ticketDocRef = doc(db, 'tickets', confirmedTicketId);
+    try {
+      const docSnap = await getDoc(ticketDocRef);
+      if (docSnap.exists()) {
+        const ticketData = docSnap.data();
+        const eventIdForRedirect = ticketData?.eventId;
+        let urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${confirmedTicketId}`;
+        let message = `Payment Confirmed for ticket ${confirmedTicketId}!`;
+
+        if (eventIdForRedirect) {
+          urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
+          message = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
+        } else {
+            console.warn(`eventId field not found in ticket document ${confirmedTicketId} for redirect. Using ticketId.`);
+        }
+        setRedirectMessage(message);
+        
+        if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+        redirectTimerRef.current = setTimeout(() => {
+            window.open(urlToOpen, '_blank');
+        }, 3000);
+
+      } else {
+        console.error(`Ticket document ${confirmedTicketId} not found for redirect.`);
+        setRedirectMessage(`Payment confirmed for ticket ${confirmedTicketId}, but details for redirect not found.`);
+      }
+    } catch (error) {
+      console.error("Error fetching ticket details for redirect:", error);
+      setRedirectMessage(`Payment confirmed for ticket ${confirmedTicketId}, error fetching redirect details.`);
+    }
+  }, [setRedirectMessage]);
+
+
   useEffect(() => {
     if (!ticketId || !amount) {
       setShowMissingParamsError(true);
       setPaymentInitiationResult({ success: false, message: "Ticket ID and Amount are required parameters." });
       return; 
     }
-    
     setShowMissingParamsError(false);
     setPaymentInitiationResult(null); 
     
@@ -84,25 +118,8 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       try {
         const docSnap = await getDoc(ticketDocRef);
         if (docSnap.exists() && docSnap.data().status === 'confirmed') {
-          const ticketData = docSnap.data();
           setIsPaymentReallyConfirmed(true);
-          const eventIdForRedirect = ticketData.eventId;
-          if (eventIdForRedirect) {
-             setRedirectMessage(`Payment previously confirmed. Redirecting to event status for ${eventIdForRedirect}...`);
-          } else {
-             setRedirectMessage(`Payment previously confirmed for ticket ${docSnap.id}.`);
-          }
-           // Start redirect timer immediately for previously confirmed
-           if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
-           if (eventIdForRedirect) {
-            redirectTimerRef.current = setTimeout(() => {
-              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${eventIdForRedirect}`, '_blank');
-            }, 3000);
-           } else {
-            redirectTimerRef.current = setTimeout(() => {
-              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${docSnap.id}`, '_blank');
-            }, 3000);
-           }
+          await performRedirect(docSnap.id);
         }
       } catch (error) {
         console.error("Error checking initial ticket status:", error);
@@ -114,7 +131,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       }
     };
     checkInitialStatus();
-  }, [ticketId, amount, toast]);
+  }, [ticketId, amount, toast, performRedirect]);
 
   useEffect(() => {
     setCurrentPhone(initialPhone || '');
@@ -136,34 +153,13 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           setIsPaymentReallyConfirmed(true);
           resetManualActionsState();
           
-          const eventIdForRedirect = ticketData.eventId;
-          let confirmationMessage = `Payment Confirmed for ticket ${docSnap.id}!`;
-          if (eventIdForRedirect) {
-            confirmationMessage = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
-          } else {
-            confirmationMessage = `Payment Confirmed for ticket ${docSnap.id}!`;
-             console.warn(`eventId field not found in ticket document ${docSnap.id} for redirect. Redirecting with ticket ID.`);
-          }
-          setRedirectMessage(confirmationMessage);
-
           toast({
             title: "Payment Confirmed!",
             description: `Your payment for ticket ${docSnap.id} has been successfully processed.`,
             className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800",
             duration: 5000,
           });
-
-          if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
-          
-          if (eventIdForRedirect) {
-            redirectTimerRef.current = setTimeout(() => {
-              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${eventIdForRedirect}`, '_blank');
-            }, 3000);
-          } else {
-            redirectTimerRef.current = setTimeout(() => {
-              window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${docSnap.id}`, '_blank');
-            }, 3000);
-          }
+          performRedirect(docSnap.id);
         }
       }
     }, (error) => {
@@ -180,7 +176,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
       if (manualActionsTimerRef.current) clearTimeout(manualActionsTimerRef.current);
     };
-  }, [ticketId, toast, isPaymentReallyConfirmed, resetManualActionsState]);
+  }, [ticketId, toast, isPaymentReallyConfirmed, resetManualActionsState, performRedirect]);
 
 
   const onInitiatePayment = async () => {
@@ -252,15 +248,30 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     
     setIsCheckingStatus(false);
     if (result.success && result.isConfirmed) {
-      // Firestore onSnapshot will handle the UI update to confirmed state and redirect
-      // Explicitly set message if one is returned
+      // Firestore onSnapshot will handle the UI update to confirmed state and redirect for payment confirmation
       setManualStatusMessage(result.message || "Payment confirmed by status check.");
+      if (result.emailSendAttempted) {
+        if (result.emailSentSuccessfully) {
+            toast({
+                title: "Email Sent",
+                description: result.emailSendMessage || "Ticket details have been sent to your email.",
+                className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800",
+            });
+        } else {
+            toast({
+                title: "Email Sending Issue",
+                description: result.emailSendMessage || "Payment is confirmed, but could not send ticket details via email.",
+                variant: "default", // Or "destructive" if it's a hard failure
+                duration: 7000,
+            });
+        }
+      }
     } else {
       setManualStatusMessage(result.message || "Could not retrieve status or payment not confirmed.");
       if (result.success && !result.isConfirmed) { 
          toast({ title: "Transaction Update", description: result.message, variant: "default"});
-      } else if (!result.success) { 
-         toast({ title: "Status Check Error", description: result.message, variant: "destructive"});
+      } else if (!result.success && !result.isConfirmed) { // API call failed or payment not confirmed
+         toast({ title: "Status Check Info", description: result.message, variant: "default"});
       }
     }
   };
@@ -276,22 +287,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
             className="mt-2 border-primary hover:bg-primary/10"
             onClick={async () => {
                 if (ticketId) {
-                  const ticketDocRef = doc(db, 'tickets', ticketId);
-                  try {
-                    const docSnap = await getDoc(ticketDocRef);
-                    if (docSnap.exists()) {
-                      const eventId = docSnap.data()?.id;
-                      if (eventId) {
-                        window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${eventId}`, '_blank');
-                      } else {
-                        window.open(`https://www.rnrsociallab.com/ticket-status?ticketId=${docSnap.id}`, '_blank');
-                      }
-                    } else {
-                       toast({title: "Error", description: "Ticket details not found for redirect.", variant: "destructive"});
-                    }
-                  } catch (e) {
-                    toast({title: "Error", description: "Could not fetch details for redirect.", variant: "destructive"});
-                  }
+                  await performRedirect(ticketId);
                 }
             }}
           >
@@ -424,14 +420,14 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                 type="tel"
                 placeholder="e.g. 0712345678 or 254712345678"
                 value={currentPhone}
-                onChange={(e) => setCurrentPhone(e.target.value)}
+                onChange={(e) => setCurrentPhone(e.target.value.replace(/\s+/g, ''))}
                 className="text-base py-2.5 bg-input border-input focus:border-primary placeholder:text-muted-foreground/70"
                 disabled={canDisableInputs}
                 required
                 aria-required="true"
               />
-               {currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) && !isPaymentReallyConfirmed &&(
-                 <p className="text-xs text-destructive pl-1 pt-1">Use a valid M-Pesa phone format.</p>
+               {currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone) && !isPaymentReallyConfirmed &&(
+                 <p className="text-xs text-destructive pl-1 pt-1">Use a valid M-Pesa phone format (07.. or 2547..).</p>
                )}
             </div>
 
@@ -468,7 +464,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           {showInitialPaymentButton && (
             <Button
               onClick={onInitiatePayment}
-              disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) ) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed }
+              disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone)) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed }
               className="w-full text-lg py-3 sm:py-4 text-white hover:opacity-90 transition-all duration-300 ease-in-out transform hover:scale-105 rounded-lg shadow-md"
               style={{ backgroundColor: MPESA_GREEN }}
               aria-label="Initiate M-Pesa Payment"
@@ -481,7 +477,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           {showRetryButtonAfterFail && (
               <Button
               onClick={onInitiatePayment} 
-              disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, '')) ) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed}
+              disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone)) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed}
               style={{ backgroundColor: MPESA_GREEN }}
               className="w-full text-lg py-3 sm:py-4 mt-2 text-white hover:opacity-90 rounded-lg shadow-sm"
               aria-label="Retry Payment Initiation"
@@ -494,5 +490,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     </Card>
   );
 };
+
+    
 
     

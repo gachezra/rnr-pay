@@ -8,13 +8,14 @@ dotenv.config();
 
 const MAILGUN_API_KEY = process.env.NEXT_PUBLIC_MAILGUN_API_KEY;
 const MAILGUN_DOMAIN = process.env.NEXT_PUBLIC_MAILGUN_DOMAIN;
-const MAILGUN_FROM_EMAIL = process.env.NEXT_PUBLIC_MAILGUN_FROM_EMAIL || `RNR Pay <mailgun@${MAILGUN_DOMAIN || 'example.com'}>`;
+const MAILGUN_FROM_EMAIL = `RNR Pay <mailgun@${MAILGUN_DOMAIN}>`;
+const MAILGUN_URL = process.env.NEXT_PUBLIC_MAILGUN_URL;
 
 let mailgunClient: any; // Placeholder for Mailgun client
 
 if (MAILGUN_API_KEY && MAILGUN_DOMAIN) {
   const mailgun = new Mailgun(formData); // formData is required for Node.js environment
-  mailgunClient = mailgun.client({ username: 'api', key: MAILGUN_API_KEY });
+  mailgunClient = mailgun.client({ username: 'api', key: MAILGUN_API_KEY , url: MAILGUN_URL});
   console.log("Mailgun client initialized.");
 } else {
   console.warn(

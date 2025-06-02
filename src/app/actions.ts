@@ -26,7 +26,7 @@ export interface PaymentInitiationResult {
   success: boolean;
   message?: string;
   umeskiaTransactionRequestId?: string; 
-  responseDescription?: string; // Message from Mpesa API
+  responseDescription?: string; // Message from Mpesa API direct initiation
 }
 
 export async function handlePaymentInitiation(
@@ -49,9 +49,9 @@ export async function handlePaymentInitiation(
   const { ticketId: ticketDocId, amount, phone, email } = validation.data;
   const numericAmount = parseFloat(amount);
 
-  const mpesaApiUrl = process.env.MPESA_API_URL;
+  const mpesaApiUrl = process.env.MPESA_API_URL; // Should be https://api.umeskiasoftwares.com/api/v1/intiatestk
   const mpesaApiKey = process.env.MPESA_API_KEY;
-  const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL; // UMS Portal login email
+  const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL; 
   const mpesaAccountId = process.env.MPESA_ACCOUNT_ID;
 
   if (!mpesaApiUrl || !mpesaApiKey || !mpesaUmsEmail || !mpesaAccountId) {
@@ -73,11 +73,11 @@ export async function handlePaymentInitiation(
     }
     
     const ticketUpdateData: any = {
-        status: 'payment_pending_mpesa', // Initial status before STK push
+        status: 'payment_pending_mpesa', 
         lastPaymentAttemptAt: serverTimestamp(),
-        phone: phone, // Store the phone used for this attempt
+        phone: phone,
     };
-    if (email) { // Store email if provided for receipt
+    if (email) { 
         ticketUpdateData.email = email;
     }
     await updateDoc(ticketRef, ticketUpdateData);
@@ -90,7 +90,7 @@ export async function handlePaymentInitiation(
       account_id: mpesaAccountId,
       msisdn: phone,
       amount: numericAmount.toString(),
-      reference: ticketDocId, // Use Firestore document ID as the reference to M-Pesa
+      reference: ticketDocId, 
     };
 
     const mpesaResponse = await axios.post(mpesaApiUrl, mpesaPayload, {
@@ -100,16 +100,16 @@ export async function handlePaymentInitiation(
     const mpesaApiResult = mpesaResponse.data;
     console.log("M-Pesa API Direct Initiation Response:", mpesaApiResult);
 
-    // Expected direct response: {"success": "200", "massage": "Request sent sucessfully.", "tranasaction_request_id": "UMSPID..."}
+    // Expecting: {"success": "200", "massage": "Request sent sucessfully.", "tranasaction_request_id": "UMSPID..."}
+    // Note: "massage" might be a typo in Umeskia docs for "message"
     if (mpesaApiResult.success === "200" && mpesaApiResult.tranasaction_request_id) {
       umeskiaTransactionRequestIdFromApi = mpesaApiResult.tranasaction_request_id;
 
       await updateDoc(ticketRef, {
-        umeskiaTransactionRequestId: umeskiaTransactionRequestIdFromApi, // Store this ID from Umeskia
-        status: 'payment_stk_sent', // Update status after STK push is initiated
+        umeskiaTransactionRequestId: umeskiaTransactionRequestIdFromApi,
+        status: 'payment_stk_sent', 
       });
 
-      // Log initial transaction for STK push
       await addDoc(collection(db, 'transactions'), {
         ticketId: ticketDocId,
         type: 'mpesa_stk_initiation',
@@ -129,7 +129,6 @@ export async function handlePaymentInitiation(
         responseDescription: mpesaApiResult.massage || mpesaApiResult.message,
       };
     } else {
-      // Handle cases where initiation response is not successful as per Umeskia docs
       const errorMessage = mpesaApiResult.massage || mpesaApiResult.message || "M-Pesa STK push initiation failed. Unexpected response from provider.";
       console.error("M-Pesa STK Push initiation failed:", errorMessage, mpesaApiResult);
       await updateDoc(ticketRef, { 
@@ -150,7 +149,6 @@ export async function handlePaymentInitiation(
     if (axios.isAxiosError(error) && error.response) {
         console.error("M-Pesa API Error Response Data:", error.response.data);
         const responseData = error.response.data;
-        // Umeskia direct initiation errors might not be structured like callbacks
         if (typeof responseData === 'string') {
             errorMessage = responseData;
         } else if (responseData && (responseData.errors || responseData.message || responseData.massage || responseData.ResponseDescription)) {
@@ -164,11 +162,15 @@ export async function handlePaymentInitiation(
     
     try {
         const ticketRef = doc(db, 'tickets', ticketDocId);
-        await updateDoc(ticketRef, { 
-            status: 'payment_initiation_error', 
-            lastPaymentAttemptAt: serverTimestamp(), 
-            errorDetails: errorMessage 
-        });
+        // Check if ticket exists before trying to update, though it should if we reached here after initial check
+        const ticketSnap = await getDoc(ticketRef);
+        if (ticketSnap.exists()) {
+            await updateDoc(ticketRef, { 
+                status: 'payment_initiation_error', 
+                lastPaymentAttemptAt: serverTimestamp(), 
+                errorDetails: errorMessage 
+            });
+        }
     } catch (dbError) {
         console.error("Failed to update ticket status on error:", dbError);
     }
@@ -187,10 +189,13 @@ const TransactionStatusCheckSchema = z.object({
 });
 
 export interface TransactionStatusResult {
-  success: boolean; // True if the API call itself was successful
+  success: boolean; // True if the API call to check status itself was successful
   message: string;
   isConfirmed?: boolean; // True if payment is confirmed by this check
   data?: any; // Full response from status check for debugging
+  emailSendAttempted?: boolean;
+  emailSentSuccessfully?: boolean;
+  emailSendMessage?: string;
 }
 
 export async function checkTransactionStatus(
@@ -209,9 +214,8 @@ export async function checkTransactionStatus(
 
   const { umeskiaTransactionRequestId, ticketId: ticketDocId } = validation.data;
 
-  // Derive status URL from base API URL
   const mpesaApiUrlBase = process.env.MPESA_API_URL?.substring(0, process.env.MPESA_API_URL.lastIndexOf('/'));
-  const mpesaStatusApiUrl = `${mpesaApiUrlBase}/transactionstatus`;
+  const mpesaStatusApiUrl = `${mpesaApiUrlBase}/transactionstatus`; // Should be https://api.umeskiasoftwares.com/api/v1/transactionstatus
   
   const mpesaApiKey = process.env.MPESA_API_KEY;
   const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL; // UMS Portal login email
@@ -232,16 +236,21 @@ export async function checkTransactionStatus(
       return { success: false, message: `Ticket ${ticketDocId} not found for status check.` };
     }
     const currentTicketData = ticketSnap.data();
-    // If already confirmed (e.g., by webhook), no need to process further here.
+    
     if (currentTicketData?.status === 'confirmed') {
-        return { success: true, message: "Payment already confirmed.", isConfirmed: true, data: currentTicketData.statusCheckConfirmationPayload || null };
+        return { 
+            success: true, 
+            message: "Payment already confirmed.", 
+            isConfirmed: true, 
+            data: currentTicketData.statusCheckConfirmationPayload || currentTicketData.webhookPayload || null 
+        };
     }
 
     console.log(`Checking M-Pesa transaction status for Umeskia ID: ${umeskiaTransactionRequestId}`);
     const statusPayload = {
       api_key: mpesaApiKey,
       email: mpesaUmsEmail, 
-      tranasaction_request_id: umeskiaTransactionRequestId, // Note: Umeskia doc shows a space here, but usually it's without. Using without.
+      tranasaction_request_id: umeskiaTransactionRequestId, // Umeskia doc has a space here, using without based on common practice
     };
 
     const statusResponse = await axios.post(mpesaStatusApiUrl, statusPayload, {
@@ -251,7 +260,6 @@ export async function checkTransactionStatus(
     const statusApiResult = statusResponse.data;
     console.log("M-Pesa Transaction Status API Response:", statusApiResult);
     
-    // Log this attempt
     await addDoc(collection(db, 'transactions'), {
         ticketId: ticketDocId,
         type: 'mpesa_status_check_api',
@@ -260,15 +268,18 @@ export async function checkTransactionStatus(
         checkedAt: serverTimestamp(),
     });
 
-    // Umeskia status check response: {"ResultCode": "200", "TransactionStatus": "Completed", "TransactionCode": "0", ...}
+    let emailSendAttempted = false;
+    let emailSentSuccessfully = false;
+    let emailSendMessage: string | undefined = undefined;
+
+    // Expected Umeskia status check response: {"ResultCode": "200", "TransactionStatus": "Completed", "TransactionCode": "0", ...}
     if (statusApiResult.ResultCode === "200" && 
         statusApiResult.TransactionStatus === "Completed" &&
         statusApiResult.TransactionCode === "0") {
 
-      // Payment Confirmed by this status check
-      const recipientEmail = currentTicketData?.email || null; // Email user provided for receipt
+      const recipientEmail = currentTicketData?.email || null; 
       const originalAmount = currentTicketData?.amount?.toString() || statusApiResult.TransactionAmount?.toString();
-      const ticketIdFieldVal = currentTicketData?.id || ticketDocId; // Use 'id' field if exists, else doc ID
+      const ticketIdFieldVal = currentTicketData?.id || ticketDocId; 
       const quantity = currentTicketData?.quantity || 1;
       const mpesaPhoneNumber = statusApiResult.Msisdn || currentTicketData?.phone || null;
       
@@ -289,20 +300,17 @@ export async function checkTransactionStatus(
         status: 'confirmed',
         mpesaResultCode: statusApiResult.TransactionCode, 
         mpesaResultDesc: statusApiResult.ResultDesc,
-        // MerchantRequestID and CheckoutRequestID are not typically in this Umeskia status response directly.
-        // They would have been on the ticket if an async callback arrived first.
-        umeskiaTransactionId: statusApiResult.TransactionID, // This is the `umeskiaTransactionRequestId`
+        umeskiaTransactionId: statusApiResult.TransactionID, 
         mpesaReceiptNumber: statusApiResult.TransactionReceipt || null,
         mpesaAmountPaid: statusApiResult.TransactionAmount || null,
         mpesaPhoneNumber: mpesaPhoneNumber,
         mpesaTransactionTimestamp: parsedTransactionDate instanceof Date ? parsedTransactionDate : serverTimestamp(),
-        lastWebhookEventAt: serverTimestamp(), 
-        lastWebhookEvent: `umeskia_status_check_confirmed_${statusApiResult.TransactionCode}`,
-        statusCheckConfirmationPayload: statusApiResult, // Store the payload that confirmed it
+        lastCheckedAt: serverTimestamp(), 
+        lastCheckedEvent: `umeskia_status_check_confirmed_${statusApiResult.TransactionCode}`,
+        statusCheckConfirmationPayload: statusApiResult, 
       };
       await updateDoc(ticketRef, ticketUpdateData);
 
-      // Log this specific confirmation as a transaction event
       await addDoc(collection(db, 'transactions'), {
         ticketId: ticketDocId,
         type: 'umeskia_mpesa_status_confirmed',
@@ -314,14 +322,14 @@ export async function checkTransactionStatus(
         mpesaReceiptNumber: statusApiResult.TransactionReceipt || null,
         mpesaPhoneNumber: mpesaPhoneNumber,
         transactionDate: parsedTransactionDate instanceof Date ? parsedTransactionDate : serverTimestamp(),
-        reference: statusApiResult.TransactionReference, // This is the ticketDocId
+        reference: statusApiResult.TransactionReference, // This should be ticketDocId
         source: 'umeskia_manual_status_check',
         createdAt: serverTimestamp(),
         rawCallbackPayload: statusApiResult,
       });
 
       if (recipientEmail && statusApiResult.TransactionReceipt) {
-        await sendPaymentConfirmationEmail(
+        const emailResult = await sendPaymentConfirmationEmail(
             recipientEmail,
             ticketDocId,
             ticketIdFieldVal,
@@ -329,19 +337,24 @@ export async function checkTransactionStatus(
             statusApiResult.TransactionReceipt,
             mpesaPhoneNumber,
             quantity,
-            recipientEmail
+            recipientEmail 
         );
+        emailSendAttempted = true;
+        emailSentSuccessfully = emailResult.success;
+        emailSendMessage = emailResult.message;
       }
       
       return { 
         success: true, 
         message: statusApiResult.ResultDesc || "Payment confirmed via status check.",
         isConfirmed: true,
-        data: statusApiResult 
+        data: statusApiResult,
+        emailSendAttempted,
+        emailSentSuccessfully,
+        emailSendMessage,
       };
 
     } else if (statusApiResult.ResultCode === "200" && statusApiResult.TransactionStatus !== "Completed") {
-      // Transaction found but not completed (e.g., Pending, Failed but not an error code)
       return {
         success: true, // API call was successful
         message: `Transaction status: ${statusApiResult.TransactionStatus}. ${statusApiResult.ResultDesc || ''}`,
@@ -350,9 +363,12 @@ export async function checkTransactionStatus(
       };
     } else {
       // Other errors (e.g. ResultCode != "200") or transaction not found by that ID
+      // Umeskia API might return a different structure for "transaction not found" or other errors.
+      // E.g., ResponseCode might not be "200" if the transaction_request_id is invalid.
+      const message = statusApiResult.ResultDesc || statusApiResult.message || "Could not confirm transaction or transaction failed/not found.";
       return {
-        success: false, // API call might have failed or returned an error ResultCode
-        message: statusApiResult.ResultDesc || "Could not confirm transaction or transaction failed/not found.",
+        success: false, // Indicates the status check didn't confirm or failed to find
+        message: message,
         isConfirmed: false,
         data: statusApiResult
       };
@@ -363,7 +379,13 @@ export async function checkTransactionStatus(
     let errorMessage = 'An error occurred while checking transaction status.';
     if (axios.isAxiosError(error) && error.response) {
       console.error("Status Check API Error Response Data:", error.response.data);
-      errorMessage = error.response.data?.ResultDesc || error.response.data?.message || JSON.stringify(error.response.data) || `Status API request failed with status ${error.response.status}.`;
+      // Handle various error structures from Umeskia status check
+      const responseData = error.response.data;
+      if (responseData && (responseData.ResultDesc || responseData.message || responseData.error || typeof responseData === 'string')) {
+        errorMessage = responseData.ResultDesc || responseData.message || responseData.error || JSON.stringify(responseData);
+      } else {
+        errorMessage = `Status API request failed with status ${error.response.status}.`;
+      }
     } else if (error.message) {
       errorMessage = error.message;
     }
@@ -373,4 +395,6 @@ export async function checkTransactionStatus(
     };
   }
 }
+    
+
     
