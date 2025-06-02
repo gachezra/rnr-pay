@@ -70,7 +70,8 @@ export async function sendEmail(options: EmailOptions): Promise<{success: boolea
 
   // Fallback simulation if not configured
   console.log(`[Simulated Email Service] Sending email to ${options.to} with subject "${options.subject}"`);
-  console.log(`Text: ${options.text}`);
+  // console.log(`Text: ${options.text}`);
+  // console.log(`HTML: ${options.html}`);
   if(!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
     console.warn("Reminder: Mailgun is not configured. This is a simulated email.");
   }
@@ -79,30 +80,107 @@ export async function sendEmail(options: EmailOptions): Promise<{success: boolea
 }
 
 export async function sendPaymentConfirmationEmail(
-  toEmail: string,
-  ticketId: string,
+  toEmail: string,          // The email address to send the confirmation to
+  ticketDocId: string,      // The document ID of the ticket from Firestore (e.g., "cMW3VQ1HaEfzOfgbnrXv")
+  ticketIdField: string,    // The value of the 'id' field within the ticket document (e.g., "RNR-PXEG-P6030S")
   amount: string,
-  transactionId: string
+  mpesaTransactionId: string,
+  phoneNumber: string | null,
+  quantity: number | string | null,
+  userProvidedEmailForReceipt: string | null // Email user entered on the payment page
 ): Promise<void> {
   if (!toEmail) {
-    console.log("No email address provided, skipping payment confirmation email.");
+    console.log("No recipient email address provided, skipping payment confirmation email.");
     return;
   }
 
-  const subject = `Payment Confirmation for Ticket ${ticketId} - RNR Pay`;
-  const textBody = `Dear Customer,\n\nYour payment for ticket ${ticketId} (Amount: $${amount}) has been successfully processed.\nTransaction ID: ${transactionId}\n\nThank you for using RNR Pay.\n\nRNR Solutions`;
+  const subject = `RNR Pay: Payment Confirmed - Ticket ${ticketIdField}`;
+  const textBody = `
+Dear Customer,
+
+Your payment has been successfully processed!
+
+Ticket Details:
+-----------------------------------
+Ticket ID: ${ticketIdField}
+Amount Paid: KES ${amount}
+M-Pesa Transaction ID: ${mpesaTransactionId}
+Phone Number: ${phoneNumber || 'N/A'}
+Quantity: ${quantity || 'N/A'}
+${userProvidedEmailForReceipt ? `Email for Receipt: ${userProvidedEmailForReceipt}` : ''}
+-----------------------------------
+
+Thank you for using RNR Pay.
+You can view your ticket status here: https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketDocId} 
+(Note: if your ticket has an associated eventId, the page might redirect you further based on that)
+
+Sincerely,
+The RNR Solutions Team
+`;
+
   const htmlBody = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.6;">
-      <h2 style="color: #8B0000;">RNR Pay - Payment Confirmation</h2>
-      <p>Dear Customer,</p>
-      <p>Your payment for ticket <strong>${ticketId}</strong> (Amount: <strong>$${amount}</strong>) has been successfully processed.</p>
-      <p>Transaction ID: <strong>${transactionId}</strong></p>
-      <p>If you have any questions, please contact our support.</p>
-      <p>Thank you for your payment!</p>
-      <p><em>Sincerely,<br/>The RNR Solutions Team</em></p>
-      <hr/>
-      <p style="font-size: 0.8em; color: #777;">This is an automated message. Please do not reply directly to this email.</p>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RNR Pay - Payment Confirmation</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.1); overflow: hidden; }
+        .header { background-color: #202A44; /* Dark Blue/Navy */ padding: 20px; text-align: center; }
+        .logo-svg { width: 60px; height: 60px; margin-bottom: 10px; }
+        .header h1 { color: #ffffff; margin: 0; font-size: 24px; }
+        .content { padding: 25px; }
+        .content h2 { color: #8B0000; /* Deep Red */ font-size: 20px; margin-top: 0; }
+        .content p { line-height: 1.6; margin-bottom: 15px; }
+        .ticket-details { border: 1px solid #ddd; border-radius: 6px; padding: 15px; margin-top: 20px; background-color: #f9f9f9; }
+        .ticket-details strong { color: #8B0000; }
+        .detail-item { margin-bottom: 8px; display: flex; justify-content: space-between; }
+        .detail-item span:first-child { font-weight: bold; color: #555; }
+        .footer { background-color: #f0f0f0; padding: 15px; text-align: center; font-size: 0.9em; color: #777; }
+        .button { display: inline-block; background-color: #00A651; /* M-Pesa Green */ color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 15px; }
+        a.button { color: #ffffff !important; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="logo-svg" fill="#FFFFFF">
+                <path d="M50 5C25.15 5 5 25.15 5 50s20.15 45 45 45 45-20.15 45-45S74.85 5 50 5zm0 82C29.07 87 13 70.93 13 50S29.07 13 50 13s37 16.07 37 37-16.07 37-37 37z" />
+                <text x="50%" y="55%" dominant-baseline="middle" text-anchor="middle" font-size="30" font-weight="bold" fill="#202A44"> 
+                    RNR
+                </text>
+            </svg>
+            <h1>Payment Confirmed!</h1>
+        </div>
+        <div class="content">
+            <h2>Thank You For Your Payment!</h2>
+            <p>Dear Customer,</p>
+            <p>Your payment has been successfully processed. Please find your ticket details below:</p>
+            
+            <div class="ticket-details">
+                <div class="detail-item"><span>Ticket ID:</span> <span>${ticketIdField}</span></div>
+                <div class="detail-item"><span>Amount Paid:</span> <span>KES ${amount}</span></div>
+                <div class="detail-item"><span>M-Pesa Transaction ID:</span> <span>${mpesaTransactionId}</span></div>
+                <div class="detail-item"><span>Phone Number:</span> <span>${phoneNumber || 'N/A'}</span></div>
+                <div class="detail-item"><span>Quantity:</span> <span>${quantity || 'N/A'}</span></div>
+                ${userProvidedEmailForReceipt ? `<div class="detail-item"><span>Email for Receipt:</span> <span>${userProvidedEmailForReceipt}</span></div>` : ''}
+            </div>
+            
+            <p>You can view the status of your ticket or access event details by clicking the button below:</p>
+            <div style="text-align: center;">
+                <a href="https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketDocId}" class="button">View Ticket Status</a>
+            </div>
+            <p style="font-size:0.9em; text-align:center; margin-top:15px;">(Note: If your ticket has an associated eventId, the page might redirect you further based on that)</p>
+        </div>
+        <div class="footer">
+            <p>&copy; ${new Date().getFullYear()} RNR Solutions. All rights reserved.</p>
+            <p>This is an automated message. Please do not reply.</p>
+        </div>
     </div>
+</body>
+</html>
   `;
 
   const result = await sendEmail({
@@ -113,7 +191,7 @@ export async function sendPaymentConfirmationEmail(
   });
 
   if (result.success) {
-    console.log(`Payment confirmation email sent to ${toEmail} for transaction ${transactionId}.`);
+    console.log(`Payment confirmation email sent to ${toEmail} for M-Pesa transaction ${mpesaTransactionId}.`);
   } else {
     console.error(`Failed to send payment confirmation email to ${toEmail}: ${result.message}`);
   }
@@ -134,3 +212,4 @@ export async function sendPaymentConfirmationEmail(
 // 9. Restart your Next.js development server for the environment variables to take effect.
 // 10. For sandbox domains, Mailgun only allows sending to "Authorized Recipients". Add your test email addresses there.
 //     For production, use a verified custom domain.
+    
