@@ -1,39 +1,28 @@
 
 'use server';
 
-// import formData from 'form-data';
-// import Mailgun from 'mailgun.js';
-
-// --- Mailgun Configuration ---
-// IMPORTANT: You need to set these environment variables in your .env.local file (create if it doesn't exist)
-// NEXT_PUBLIC_MAILGUN_API_KEY=your_mailgun_api_key
-// NEXT_PUBLIC_MAILGUN_DOMAIN=your_mailgun_domain (e.g., mg.yourdomain.com or your sandbox domain)
-// NEXT_PUBLIC_MAILGUN_FROM_EMAIL="RNR Pay <noreply@your_mailgun_domain>" (Optional, defaults are provided)
-//
-// You also need to install the mailgun-js library:
-// npm install mailgun.js form-data
-// OR
-// yarn add mailgun.js form-data
-//
-// Then, uncomment the import statements above and the Mailgun client initialization code below.
+import formData from 'form-data';
+import Mailgun from 'mailgun.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const MAILGUN_API_KEY = process.env.NEXT_PUBLIC_MAILGUN_API_KEY;
 const MAILGUN_DOMAIN = process.env.NEXT_PUBLIC_MAILGUN_DOMAIN;
 const MAILGUN_FROM_EMAIL = process.env.NEXT_PUBLIC_MAILGUN_FROM_EMAIL || `RNR Pay <mailgun@${MAILGUN_DOMAIN || 'example.com'}>`;
 
-// let mailgunClient: any; // Placeholder for Mailgun client
+let mailgunClient: any; // Placeholder for Mailgun client
 
-// if (MAILGUN_API_KEY && MAILGUN_DOMAIN) {
-//   const mailgun = new Mailgun(formData); // formData is required for Node.js environment
-//   mailgunClient = mailgun.client({ username: 'api', key: MAILGUN_API_KEY });
-//   console.log("Mailgun client initialized.");
-// } else {
-//   console.warn(
-//     "Mailgun API Key or Domain not configured in environment variables (NEXT_PUBLIC_MAILGUN_API_KEY, NEXT_PUBLIC_MAILGUN_DOMAIN). " +
-//     "Email sending will be simulated. " +
-//     "Please set them up in your .env.local file."
-//   );
-// }
+if (MAILGUN_API_KEY && MAILGUN_DOMAIN) {
+  const mailgun = new Mailgun(formData); // formData is required for Node.js environment
+  mailgunClient = mailgun.client({ username: 'api', key: MAILGUN_API_KEY });
+  console.log("Mailgun client initialized.");
+} else {
+  console.warn(
+    "Mailgun API Key or Domain not configured in environment variables (NEXT_PUBLIC_MAILGUN_API_KEY, NEXT_PUBLIC_MAILGUN_DOMAIN). " +
+    "Email sending will be simulated. " +
+    "Please set them up in your .env.local file."
+  );
+}
 
 interface EmailOptions {
   to: string;
@@ -43,40 +32,30 @@ interface EmailOptions {
 }
 
 export async function sendEmail(options: EmailOptions): Promise<{success: boolean, message?: string}> {
-  // if (!mailgunClient) {
-  //   console.log("[Simulated Email] Mailgun not initialized. Simulating email send:", options);
-  //   await new Promise(resolve => setTimeout(resolve, 300)); // Simulate network delay
-  //   return { success: true, message: "Email sent (simulated as Mailgun is not configured)." };
-  // }
-
-  // // Actual Mailgun sending logic
-  // try {
-  //   const data = {
-  //     from: MAILGUN_FROM_EMAIL,
-  //     to: options.to,
-  //     subject: options.subject,
-  //     text: options.text,
-  //     html: options.html || options.text,
-  //   };
-  //   // Note: For Mailgun EU domains, you might need to specify the base URL:
-  //   // const response = await mailgunClient.messages.create(MAILGUN_DOMAIN, data, {baseUrl: 'https://api.eu.mailgun.net'});
-  //   const response = await mailgunClient.messages.create(MAILGUN_DOMAIN!, data);
-  //   console.log("Email sent successfully via Mailgun:", response);
-  //   return { success: true, message: "Email sent successfully." };
-  // } catch (error: any) {
-  //   console.error("Error sending email via Mailgun:", error.message || error);
-  //   return { success: false, message: `Failed to send email: ${error.message || 'Unknown Mailgun error'}` };
-  // }
-
-  // Fallback simulation if not configured
-  console.log(`[Simulated Email Service] Sending email to ${options.to} with subject "${options.subject}"`);
-  // console.log(`Text: ${options.text}`);
-  // console.log(`HTML: ${options.html}`);
-  if(!MAILGUN_API_KEY || !MAILGUN_DOMAIN) {
-    console.warn("Reminder: Mailgun is not configured. This is a simulated email.");
+  if (!mailgunClient) {
+    console.log("[Simulated Email] Mailgun not initialized. Simulating email send:", options);
+    await new Promise(resolve => setTimeout(resolve, 300)); // Simulate network delay
+    return { success: true, message: "Email sent (simulated as Mailgun is not configured)." };
   }
-  await new Promise(resolve => setTimeout(resolve, 300)); // Simulate network delay for simulation
-  return { success: true, message: "Email sent (simulated)." };
+
+  // Actual Mailgun sending logic
+  try {
+    const data = {
+      from: MAILGUN_FROM_EMAIL,
+      to: options.to,
+      subject: options.subject,
+      text: options.text,
+      html: options.html || options.text,
+    };
+    // Note: For Mailgun EU domains, you might need to specify the base URL:
+    // const response = await mailgunClient.messages.create(MAILGUN_DOMAIN, data, {baseUrl: 'https://api.eu.mailgun.net'});
+    const response = await mailgunClient.messages.create(MAILGUN_DOMAIN!, data);
+    console.log("Email sent successfully via Mailgun:", response);
+    return { success: true, message: "Email sent successfully." };
+  } catch (error: any) {
+    console.error("Error sending email via Mailgun:", error.message || error);
+    return { success: false, message: `Failed to send email: ${error.message || 'Unknown Mailgun error'}` };
+  }
 }
 
 export async function sendPaymentConfirmationEmail(
