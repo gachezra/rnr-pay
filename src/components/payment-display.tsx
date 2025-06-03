@@ -8,11 +8,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, ExternalLink, AlertTriangle, RefreshCw, Search, Copy, Check } from 'lucide-react';
-import { handlePaymentInitiation, type PaymentInitiationResult, checkTransactionStatus, type TransactionStatusResult } from '@/app/actions';
+import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, ExternalLink, AlertTriangle, RefreshCw, Search, Copy, Check, Send, MailWarning } from 'lucide-react';
+import { 
+  handlePaymentInitiation, type PaymentInitiationResult, 
+  checkTransactionStatus, type TransactionStatusResult,
+  processAndSendTicketEmail, type ProcessEmailResult,
+  resendTicketEmailAction
+} from '@/app/actions';
 import { useToast } from "@/hooks/use-toast";
 import { db } from '@/lib/firebase';
-import { doc, onSnapshot, getDoc } from 'firebase/firestore';
+import { doc, onSnapshot, getDoc, DocumentData } from 'firebase/firestore';
 
 const MANUAL_ACTIONS_DELAY = 20000; // 20 seconds
 const MPESA_GREEN = "#00A651";
@@ -39,10 +44,13 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   const manualActionsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [showManualActions, setShowManualActions] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
+  const [isResendingEmail, setIsResendingEmail] = useState(false);
   const [manualStatusMessage, setManualStatusMessage] = useState<string | null>(null);
   const [umeskiaTransactionRequestIdForStatusCheck, setUmeskiaTransactionRequestIdForStatusCheck] = useState<string | undefined>(undefined);
   
   const [ticketCopied, setTicketCopied] = useState(false);
+  const [ticketDataFromDb, setTicketDataFromDb] = useState<DocumentData | null>(null);
+
 
   const { toast } = useToast();
 
@@ -53,7 +61,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
         toast({ title: "Copied!", description: "Ticket ID copied to clipboard.", className: "bg-green-600 border-green-700 text-white dark:bg-green-700 dark:border-green-800" });
         setTimeout(() => setTicketCopied(false), 2000);
       }).catch(err => {
-        console.error('Failed to copy Ticket ID: ', err);
         toast({ title: "Copy Error", description: "Could not copy Ticket ID.", variant: "destructive" });
       });
     }
@@ -69,69 +76,106 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setIsCheckingStatus(false);
   }, []);
 
-  const performRedirect = useCallback(async (confirmedTicketId: string) => {
-    const ticketDocRef = doc(db, 'tickets', confirmedTicketId);
-    try {
-      const docSnap = await getDoc(ticketDocRef);
-      if (docSnap.exists()) {
-        const ticketData = docSnap.data();
-        const eventIdForRedirect = ticketData?.eventId;
-        let urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${confirmedTicketId}`;
-        let message = `Payment Confirmed for ticket ${confirmedTicketId}!`;
+  const performRedirect = useCallback(async (confirmedTicketId: string, eventIdForRedirect?: string) => {
+    let urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${confirmedTicketId}`;
+    let message = `Payment Confirmed for ticket ${confirmedTicketId}!`;
 
-        if (eventIdForRedirect) {
-          urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
-          message = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
-        } else {
-            console.warn(`eventId field not found in ticket document ${confirmedTicketId} for redirect. Using ticketId.`);
-        }
-        setRedirectMessage(message);
-        
-        if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
-        redirectTimerRef.current = setTimeout(() => {
-            window.open(urlToOpen, '_blank');
-        }, 3000);
-
-      } else {
-        console.error(`Ticket document ${confirmedTicketId} not found for redirect.`);
-        setRedirectMessage(`Payment confirmed for ticket ${confirmedTicketId}, but details for redirect not found.`);
-      }
-    } catch (error) {
-      console.error("Error fetching ticket details for redirect:", error);
-      setRedirectMessage(`Payment confirmed for ticket ${confirmedTicketId}, error fetching redirect details.`);
+    if (eventIdForRedirect) {
+      urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
+      message = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
     }
+    setRedirectMessage(message);
+    
+    if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+    redirectTimerRef.current = setTimeout(() => {
+        window.open(urlToOpen, '_blank');
+    }, 3000);
   }, [setRedirectMessage]);
 
+  const triggerEmailSendIfNeeded = useCallback(async (currentTicketId: string, currentTicketData: DocumentData) => {
+    if (currentTicketData.status === 'confirmed' && currentTicketData.email && !currentTicketData.emailSent) {
+      toast({ title: "Processing Email", description: "Your ticket is confirmed, preparing email...", className: "bg-blue-600 dark:bg-blue-700 text-white" });
+      const emailResult: ProcessEmailResult = await processAndSendTicketEmail(currentTicketId);
+      if (emailResult.attempted) {
+        if (emailResult.success) {
+          toast({ title: "Email Sent!", description: emailResult.message, className: "bg-green-600 dark:bg-green-700 text-white" });
+        } else {
+          toast({ title: "Email Issue", description: emailResult.message, variant: "destructive", duration: 7000 });
+        }
+      }
+    }
+  }, [toast]);
 
+  // Effect for initial check and setting up Firestore listener
   useEffect(() => {
     if (!ticketId || !amount) {
       setShowMissingParamsError(true);
       setPaymentInitiationResult({ success: false, message: "Ticket ID and Amount are required parameters." });
-      return; 
+      return;
     }
     setShowMissingParamsError(false);
-    setPaymentInitiationResult(null); 
-    
-    const checkInitialStatus = async () => {
-      if (!ticketId) return; 
-      const ticketDocRef = doc(db, 'tickets', ticketId);
-      try {
-        const docSnap = await getDoc(ticketDocRef);
-        if (docSnap.exists() && docSnap.data().status === 'confirmed') {
+    setPaymentInitiationResult(null);
+
+    const ticketDocRef = doc(db, 'tickets', ticketId);
+
+    // Initial fetch
+    getDoc(ticketDocRef).then(docSnap => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setTicketDataFromDb(data);
+        if (data.status === 'confirmed') {
           setIsPaymentReallyConfirmed(true);
-          await performRedirect(docSnap.id);
+          performRedirect(docSnap.id, data.eventId);
+          triggerEmailSendIfNeeded(docSnap.id, data); // Check email on initial load if confirmed
         }
-      } catch (error) {
-        console.error("Error checking initial ticket status:", error);
-        toast({
-          title: "Error",
-          description: "Could not check initial ticket status. Please try refreshing.",
-          variant: "destructive",
-        });
+      } else {
+         toast({ title: "Error", description: `Ticket ${ticketId} not found.`, variant: "destructive" });
+         setShowMissingParamsError(true); // Treat as missing param
       }
+    }).catch(error => {
+      console.error("Error fetching initial ticket status:", error);
+      toast({ title: "Error", description: "Could not fetch initial ticket status.", variant: "destructive" });
+    });
+
+    // Real-time listener
+    const unsubscribe = onSnapshot(ticketDocRef, async (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        setTicketDataFromDb(data); // Keep local state of ticket data updated
+
+        if (data.status === 'confirmed' && !isPaymentReallyConfirmed) {
+          setIsPaymentReallyConfirmed(true);
+          resetManualActionsState();
+          toast({
+            title: "Payment Confirmed!",
+            description: `Your payment for ticket ${docSnap.id} has been successfully processed.`,
+            className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800",
+            duration: 5000,
+          });
+          await performRedirect(docSnap.id, data.eventId);
+        }
+        // Trigger email if status becomes confirmed and email not sent
+        if (data.status === 'confirmed') {
+            await triggerEmailSendIfNeeded(docSnap.id, data);
+        }
+
+      } else {
+        // Handle case where ticket might be deleted, though unlikely in this flow
+        console.warn(`Ticket ${ticketId} no longer exists.`);
+        setIsPaymentReallyConfirmed(false); // Reset if ticket disappears
+      }
+    }, (error) => {
+      console.error("Error listening to ticket status:", error);
+      toast({ title: "Listener Error", description: "Real-time payment updates may be affected.", variant: "destructive" });
+    });
+
+    return () => {
+      unsubscribe();
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+      if (manualActionsTimerRef.current) clearTimeout(manualActionsTimerRef.current);
     };
-    checkInitialStatus();
-  }, [ticketId, amount, toast, performRedirect]);
+  }, [ticketId, amount, toast, isPaymentReallyConfirmed, resetManualActionsState, performRedirect, triggerEmailSendIfNeeded]);
+
 
   useEffect(() => {
     setCurrentPhone(initialPhone || '');
@@ -140,44 +184,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   useEffect(() => {
     setCurrentEmail(initialEmail || '');
   }, [initialEmail]);
-
-  useEffect(() => {
-    if (!ticketId) return;
-    if (isPaymentReallyConfirmed) return; 
-
-    const ticketDocRef = doc(db, 'tickets', ticketId);
-    const unsubscribe = onSnapshot(ticketDocRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const ticketData = docSnap.data();
-        if (ticketData.status === 'confirmed' && !isPaymentReallyConfirmed) { 
-          setIsPaymentReallyConfirmed(true);
-          resetManualActionsState();
-          
-          toast({
-            title: "Payment Confirmed!",
-            description: `Your payment for ticket ${docSnap.id} has been successfully processed.`,
-            className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800",
-            duration: 5000,
-          });
-          performRedirect(docSnap.id);
-        }
-      }
-    }, (error) => {
-      console.error("Error listening to ticket status:", error);
-      toast({
-        title: "Listener Error",
-        description: "Could not listen for real-time payment updates. Please try checking status manually or refresh.",
-        variant: "destructive",
-      })
-    });
-
-    return () => {
-      unsubscribe();
-      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
-      if (manualActionsTimerRef.current) clearTimeout(manualActionsTimerRef.current);
-    };
-  }, [ticketId, toast, isPaymentReallyConfirmed, resetManualActionsState, performRedirect]);
-
 
   const onInitiatePayment = async () => {
     if (!ticketId || !amount) {
@@ -189,7 +195,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       return;
     }
     if (!/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone.replace(/\s+/g, ''))) {
-        toast({ title: "Invalid Phone Format", description: "Use 07XXXXXXXX, 01XXXXXXXX, 2547XXXXXXXX or 2541XXXXXXXX.", variant: "destructive" });
+        toast({ title: "Invalid Phone Format", description: "Use 07xx.., 01xx.., 2547xx.. or 2541xx..", variant: "destructive" });
         return;
     }
     if (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) {
@@ -199,9 +205,8 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
     setIsLoading(true);
     setPaymentInitiationResult(null);
-    resetManualActionsState(); 
+    resetManualActionsState();
     setUmeskiaTransactionRequestIdForStatusCheck(undefined);
-
 
     const paymentParams = { ticketId, amount, phone: currentPhone, email: currentEmail || undefined };
     const result = await handlePaymentInitiation(paymentParams);
@@ -219,6 +224,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       
       if (manualActionsTimerRef.current) clearTimeout(manualActionsTimerRef.current);
       manualActionsTimerRef.current = setTimeout(() => {
+        // Check isPaymentReallyConfirmed state directly from the state variable, not a stale closure value
         if (!isPaymentReallyConfirmed) { 
             setShowManualActions(true);
         }
@@ -248,31 +254,32 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     
     setIsCheckingStatus(false);
     if (result.success && result.isConfirmed) {
-      // Firestore onSnapshot will handle the UI update to confirmed state and redirect for payment confirmation
-      setManualStatusMessage(result.message || "Payment confirmed by status check.");
-      if (result.emailSendAttempted) {
-        if (result.emailSentSuccessfully) {
-            toast({
-                title: "Email Sent",
-                description: result.emailSendMessage || "Ticket details have been sent to your email.",
-                className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800",
-            });
-        } else {
-            toast({
-                title: "Email Sending Issue",
-                description: result.emailSendMessage || "Payment is confirmed, but could not send ticket details via email.",
-                variant: "default", // Or "destructive" if it's a hard failure
-                duration: 7000,
-            });
-        }
-      }
+      // Firestore onSnapshot will handle the UI update to confirmed state, redirect, and email sending
+      setManualStatusMessage(result.message || "Payment confirmed by status check. Page will update.");
+      // No direct email sending here; onSnapshot handles it
     } else {
       setManualStatusMessage(result.message || "Could not retrieve status or payment not confirmed.");
       if (result.success && !result.isConfirmed) { 
          toast({ title: "Transaction Update", description: result.message, variant: "default"});
-      } else if (!result.success && !result.isConfirmed) { // API call failed or payment not confirmed
+      } else if (!result.success && !result.isConfirmed) {
          toast({ title: "Status Check Info", description: result.message, variant: "default"});
       }
+    }
+  };
+
+  const handleResendEmail = async () => {
+    if (!ticketId) {
+      toast({ title: "Error", description: "Ticket ID not available.", variant: "destructive"});
+      return;
+    }
+    setIsResendingEmail(true);
+    const result = await resendTicketEmailAction(ticketId);
+    setIsResendingEmail(false);
+
+    if (result.success) {
+      toast({ title: "Email Resent", description: result.message, className: "bg-green-600 dark:bg-green-700 text-white" });
+    } else {
+      toast({ title: "Resend Failed", description: result.message, variant: "destructive" });
     }
   };
   
@@ -282,17 +289,28 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
         <div className="flex flex-col items-center justify-center space-y-3 text-center">
           <CheckCircle2 className="h-12 w-12 mx-auto text-green-500" />
           <p className="text-lg font-semibold text-foreground">{redirectMessage}</p>
-          <Button 
-            variant="outline" 
-            className="mt-2 border-primary hover:bg-primary/10"
-            onClick={async () => {
-                if (ticketId) {
-                  await performRedirect(ticketId);
-                }
-            }}
-          >
-            Go to Ticket Status Now <ExternalLink className="ml-1 h-4 w-4"/>
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-2 mt-2">
+            <Button 
+              variant="outline" 
+              className="border-primary hover:bg-primary/10"
+              onClick={async () => {
+                  if (ticketId) {
+                    const currentTicketSnap = await getDoc(doc(db, 'tickets', ticketId));
+                    if (currentTicketSnap.exists()) {
+                      await performRedirect(ticketId, currentTicketSnap.data()?.eventId);
+                    } else {
+                      await performRedirect(ticketId); // Fallback if doc gone
+                    }
+                  }
+              }}
+            >
+              Go to Ticket Status Now <ExternalLink className="ml-1 h-4 w-4"/>
+            </Button>
+            <Button onClick={handleResendEmail} disabled={isResendingEmail} variant="secondary">
+              {isResendingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Resend Ticket Email
+            </Button>
+          </div>
         </div>
       );
     }
@@ -372,7 +390,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
             <XCircle className="h-5 w-5" />
             <AlertTitle className="font-semibold">Missing Information</AlertTitle>
             <AlertDescription>
-              Ticket ID and Amount are required. Please check the URL or contact support.
+              Ticket ID and Amount are required. Please check the URL or contact support if this persists.
             </AlertDescription>
           </Alert>
         )}
@@ -435,13 +453,13 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
               <div className="flex items-center space-x-2">
                 <Mail className="h-5 w-5 text-primary" />
                 <Label htmlFor="email-input" className="text-sm font-medium text-foreground/80">
-                  Email (For Receipt)
+                  Email (For Receipt & Ticket)
                 </Label>
               </div>
               <Input
                 id="email-input"
                 type="email"
-                placeholder="your.email@example.com (Optional)"
+                placeholder="your.email@example.com (Optional but recommended)"
                 value={currentEmail}
                 onChange={(e) => setCurrentEmail(e.target.value)}
                 className="text-base py-2.5 bg-input border-input focus:border-primary placeholder:text-muted-foreground/70"
@@ -450,6 +468,12 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                {currentEmail && !/\S+@\S+\.\S+/.test(currentEmail) && !isPaymentReallyConfirmed &&(
                  <p className="text-xs text-destructive pl-1 pt-1">Enter a valid email address.</p>
                )}
+              {currentEmail && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1 pl-1 pt-1">
+                  <MailWarning className="h-3 w-3 text-yellow-500" />
+                  If you don't receive your ticket, please check your spam/junk folder.
+                </p>
+              )}
             </div>
           </>
         )}
@@ -487,10 +511,19 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           )}
         </CardFooter>
       )}
+       {isPaymentReallyConfirmed && !redirectMessage && ticketDataFromDb?.email && ( // Show resend if confirmed, no active redirect, and email exists
+        <CardFooter className="flex flex-col items-center pt-2 pb-6 px-4 sm:px-6">
+          <Button onClick={handleResendEmail} disabled={isResendingEmail} variant="outline" className="w-full max-w-xs">
+            {isResendingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+            Resend Ticket Email
+          </Button>
+           <p className="text-xs text-muted-foreground mt-2 text-center">
+                Ticket email already sent to {ticketDataFromDb.email}. Check spam/junk if not found.
+            </p>
+        </CardFooter>
+      )}
     </Card>
   );
 };
-
-    
 
     

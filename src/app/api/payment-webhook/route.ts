@@ -4,37 +4,30 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/firebase';
 import { doc, updateDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
-import { sendPaymentConfirmationEmail } from '@/lib/emailService';
+// Email sending is now handled by Firestore onSnapshot listener in PaymentDisplay calling a server action
 
-// Schema for Umeskia's STK Push callback object
-const UmeskiaStkCallbackSchema = z.object({
+const StkCallbackSchema = z.object({
   ResponseCode: z.union([z.number(), z.string().regex(/^\d+$/).transform(Number)]),
   ResponseDescription: z.string(),
-  MerchantRequestID: z.string(),
-  CheckoutRequestID: z.string(),
-  TransactionID: z.string().optional(), // This is the umeskiaTransactionRequestId from initiation
+  MerchantRequestID: z.string().optional(), // Umeskia success dump has it, error dump might not
+  CheckoutRequestID: z.string().optional(), // Umeskia success dump has it, error dump might not
+  TransactionID: z.string().optional(), // This is the umeskiaTransactionRequestId from initiation / their TransactionID
   TransactionAmount: z.union([z.number(), z.string().regex(/^[\d.]+$/).transform(Number)]).optional(),
   TransactionReceipt: z.string().optional(),
   TransactionDate: z.string().optional(), // e.g., "20210421114425"
   TransactionReference: z.string().optional(), // This should be our ticketId used as reference
   Msisdn: z.string().optional(), // Phone number that made the payment
-}).passthrough();
+}).passthrough(); // Use passthrough for any extra fields Umeskia might send
 
-// Schema for the overall M-Pesa webhook payload from Umeskia
 const UmeskiaWebhookPayloadSchema = z.object({
   Body: z.object({
-    stkCallback: UmeskiaStkCallbackSchema,
+    stkCallback: StkCallbackSchema,
   }),
 }).passthrough();
 
 
 export async function POST(request: NextRequest) {
   try {
-    // IMPORTANT: Implement webhook security (e.g., signature verification from Umeskia or IP whitelisting)
-    // console.log("Received Umeskia M-Pesa webhook from IP:", request.ip);
-    // const rawBody = await request.text(); // For signature verification if needed
-    // const payload = JSON.parse(rawBody);
-
     const payload = await request.json();
     console.log("Umeskia Webhook Payload Received:", JSON.stringify(payload, null, 2));
 
@@ -49,8 +42,8 @@ export async function POST(request: NextRequest) {
     const {
       ResponseCode,
       ResponseDescription,
-      MerchantRequestID,
-      CheckoutRequestID,
+      MerchantRequestID, // Umeskia may or may not send this, handle if present
+      CheckoutRequestID, // Umeskia may or may not send this, handle if present
       TransactionID: umeskiaTransactionIdFromCallback, 
       TransactionAmount,
       TransactionReceipt,
@@ -62,13 +55,32 @@ export async function POST(request: NextRequest) {
     const ticketDocId = TransactionReference; 
 
     if (!ticketDocId) {
-      console.error('Umeskia M-Pesa Webhook: Ticket ID (TransactionReference) not found in stkCallback for MerchantRequestID:', MerchantRequestID);
+      console.error('Umeskia M-Pesa Webhook: Ticket ID (TransactionReference) not found in stkCallback.');
       return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted", message: "Webhook processed, but Ticket ID (TransactionReference) missing." }, { status: 200 });
     }
 
-    console.log(`Umeskia M-Pesa Webhook: MerchantRequestID: ${MerchantRequestID}, CheckoutRequestID: ${CheckoutRequestID}, ResponseCode: ${ResponseCode}, TicketDocID: ${ticketDocId}`);
-
-    const paymentStatus = ResponseCode === 0 ? 'confirmed' : 'failed';
+    const ticketRef = doc(db, 'tickets', ticketDocId);
+    const ticketSnap = await getDoc(ticketRef);
+    
+    if (!ticketSnap.exists()) {
+      console.error(`Umeskia M-Pesa Webhook: Ticket ${ticketDocId} not found in database.`);
+      return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted", message: "Webhook processed, ticket not found internally." }, { status: 200 });
+    }
+    
+    const currentTicketData = ticketSnap.data();
+    if (currentTicketData?.status === 'confirmed') {
+        console.log(`Ticket ${ticketDocId} already confirmed. Webhook processing skipped for status update.`);
+        // Log the callback anyway for audit purposes
+        await addDoc(collection(db, 'transactions'), {
+            ticketId: ticketDocId,
+            type: 'umeskia_mpesa_callback_ignored_already_confirmed',
+            rawCallbackPayload: stkCallback,
+            receivedAt: serverTimestamp(),
+        });
+        return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted, ticket already confirmed." }, { status: 200 });
+    }
+    
+    const paymentStatus = ResponseCode === 0 ? 'confirmed' : 'failed'; // 'confirmed' will trigger onSnapshot
     
     let parsedTransactionDate: any = serverTimestamp();
     if (TransactionDate) { 
@@ -82,39 +94,26 @@ export async function POST(request: NextRequest) {
             parsedTransactionDate = new Date(Date.UTC(year, month, day, hour, minute, second));
         } catch (e) {
             console.warn("Could not parse Umeskia M-Pesa transaction date:", TransactionDate, e);
-            parsedTransactionDate = serverTimestamp(); 
         }
     }
-
-    const ticketRef = doc(db, 'tickets', ticketDocId);
-    const ticketSnap = await getDoc(ticketRef);
-    
-    if (!ticketSnap.exists()) {
-      console.error(`Umeskia M-Pesa Webhook: Ticket ${ticketDocId} not found in database.`);
-      return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted", message: "Webhook processed, ticket not found internally." }, { status: 200 });
-    }
-    
-    const currentTicketData = ticketSnap.data();
-    // const recipientEmail = currentTicketData?.email || null; 
-    // const originalAmountExpected = currentTicketData?.amount?.toString() || (TransactionAmount ? TransactionAmount.toString() : 'N/A');
-    // const ticketIdFieldVal = currentTicketData?.id || ticketDocId; 
-    // const quantity = currentTicketData?.quantity || 1; 
 
     const ticketUpdateData: any = {
       status: paymentStatus,
       mpesaResultCode: ResponseCode,
       mpesaResultDesc: ResponseDescription,
-      merchantRequestId: MerchantRequestID, 
-      checkoutRequestId: CheckoutRequestID, 
-      umeskiaTransactionId: umeskiaTransactionIdFromCallback, 
+      umeskiaTransactionId: umeskiaTransactionIdFromCallback || currentTicketData?.umeskiaTransactionRequestId, // Prefer callback, fallback to stored one
       mpesaReceiptNumber: TransactionReceipt || null,
       mpesaAmountPaid: TransactionAmount || null,
       mpesaPhoneNumber: mpesaPhoneNumber || currentTicketData?.phone || null,
       mpesaTransactionTimestamp: parsedTransactionDate instanceof Date ? parsedTransactionDate : serverTimestamp(),
       lastWebhookEventAt: serverTimestamp(),
       lastWebhookEvent: `umeskia_stk_callback_${ResponseCode}`,
-      webhookPayload: stkCallback, 
+      webhookPayload: stkCallback,
     };
+    // Add MerchantRequestID and CheckoutRequestID if present in callback
+    if (MerchantRequestID) ticketUpdateData.merchantRequestId = MerchantRequestID;
+    if (CheckoutRequestID) ticketUpdateData.checkoutRequestId = CheckoutRequestID;
+
     await updateDoc(ticketRef, ticketUpdateData);
     console.log(`Ticket ${ticketDocId} status updated to ${paymentStatus} via webhook.`);
 
@@ -139,19 +138,9 @@ export async function POST(request: NextRequest) {
     await addDoc(collection(db, 'transactions'), transactionLogData);
     console.log(`Umeskia M-Pesa callback transaction log created for Ticket ID: ${ticketDocId}`);
 
-    // Email sending is now handled by the manual status check if it confirms payment
-    // if (paymentStatus === 'confirmed' && recipientEmail && TransactionReceipt) {
-    //   await sendPaymentConfirmationEmail(
-    //     recipientEmail,
-    //     ticketDocId,
-    //     ticketIdFieldVal,
-    //     originalAmountExpected,
-    //     TransactionReceipt,
-    //     mpesaPhoneNumber || currentTicketData?.phone || null,
-    //     quantity,
-    //     recipientEmail
-    //   );
-    // }
+    // Email is no longer sent from here directly.
+    // The status update to 'confirmed' will be caught by onSnapshot listener on client if active,
+    // which then calls processAndSendTicketEmail server action.
 
     return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" }, { status: 200 });
 
@@ -163,6 +152,7 @@ export async function POST(request: NextRequest) {
     } else if (typeof error === 'string') {
         errorMessage = error;
     }
+    // Still acknowledge receipt to M-Pesa to prevent retries if possible
     return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted with internal processing error", error: errorMessage }, { status: 200 });
   }
 }
@@ -170,4 +160,5 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   return NextResponse.json({ message: 'Umeskia M-Pesa Webhook endpoint is active. Use POST for STK callbacks.' }, { status: 200 });
 }
+
     
