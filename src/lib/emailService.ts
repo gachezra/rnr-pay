@@ -118,6 +118,7 @@ The RNR Solutions Team
         .ticket-details strong { color: #8B0000; }
         .detail-item { margin-bottom: 8px; display: flex; justify-content: space-between; }
         .detail-item span:first-child { font-weight: bold; color: #555; }
+        .detail-value { font-weight: bold; }
         .footer { background-color: #f0f0f0; padding: 15px; text-align: center; font-size: 0.9em; color: #777; }
         .button { display: inline-block; background-color: #00A651; /* M-Pesa Green */ color: #ffffff; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-top: 15px; }
         a.button { color: #ffffff !important; }
@@ -140,12 +141,10 @@ The RNR Solutions Team
             <p>Your payment has been successfully processed. Please find your ticket details below:</p>
             
             <div class="ticket-details">
-                <div class="detail-item"><span>Ticket ID:</span> <span>${ticketIdField}</span></div>
-                <div class="detail-item"><span>Amount Paid:</span> <span>KES ${amount}</span></div>
-                <div class="detail-item"><span>M-Pesa Transaction ID:</span> <span>${mpesaTransactionId}</span></div>
-                <div class="detail-item"><span>Phone Number:</span> <span>${phoneNumber || 'N/A'}</span></div>
-                <div class="detail-item"><span>Quantity:</span> <span>${quantity || 'N/A'}</span></div>
-                ${userProvidedEmailForReceipt ? `<div class="detail-item"><span>Email for Receipt:</span> <span>${userProvidedEmailForReceipt}</span></div>` : ''}
+                <div class="detail-item"><span>Ticket ID:&nbsp;</span> <span class="detail-value">${ticketIdField}</span></div>
+                <div class="detail-item"><span>Amount Paid:&nbsp;</span> <span class="detail-value">KES ${amount}</span></div>
+                <div class="detail-item"><span>Phone Number:&nbsp;</span> <span class="detail-value">${phoneNumber || 'N/A'}</span></div>
+                <div class="detail-item"><span>Quantity of Tickets:&nbsp;</span class="detail-value"> <span>${quantity || 'N/A'}</span></div>
             </div>
             
             <p>You can view the status of your ticket or access event details by clicking the button below:</p>

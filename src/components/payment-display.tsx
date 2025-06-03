@@ -50,6 +50,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   
   const [ticketCopied, setTicketCopied] = useState(false);
   const [ticketDataFromDb, setTicketDataFromDb] = useState<DocumentData | null>(null);
+  const [isProcessingEmail, setIsProcessingEmail] = useState(false);
 
 
   const { toast } = useToast();
@@ -83,6 +84,8 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     if (eventIdForRedirect) {
       urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
       message = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
+    } else {
+       message = `Payment Confirmed for ticket ${confirmedTicketId}! Redirecting to ticket status...`;
     }
     setRedirectMessage(message);
     
@@ -93,18 +96,27 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   }, [setRedirectMessage]);
 
   const triggerEmailSendIfNeeded = useCallback(async (currentTicketId: string, currentTicketData: DocumentData) => {
-    if (currentTicketData.status === 'confirmed' && currentTicketData.email && !currentTicketData.emailSent) {
-      toast({ title: "Processing Email", description: "Your ticket is confirmed, preparing email...", className: "bg-blue-600 dark:bg-blue-700 text-white" });
+    if (currentTicketData.status === 'confirmed' && 
+        currentTicketData.email && 
+        !currentTicketData.emailSent &&
+        !isProcessingEmail) {
+
+      setIsProcessingEmail(true);
+      // Simple toast, more details can be added if needed
+      // toast({ title: "Processing Email", description: "Your ticket is confirmed, preparing email...", className: "bg-blue-600 dark:bg-blue-700 text-white" });
+      
       const emailResult: ProcessEmailResult = await processAndSendTicketEmail(currentTicketId);
+      
       if (emailResult.attempted) {
-        if (emailResult.success) {
-          toast({ title: "Email Sent!", description: emailResult.message, className: "bg-green-600 dark:bg-green-700 text-white" });
-        } else {
+        if (emailResult.success && emailResult.message !== "Ticket email was already sent previously.") { // Avoid toasting if server said it was already sent
+          toast({ title: "Email Sent!", description: "Your ticket has been sent to your email address.", className: "bg-green-600 dark:bg-green-700 text-white" });
+        } else if (!emailResult.success) {
           toast({ title: "Email Issue", description: emailResult.message, variant: "destructive", duration: 7000 });
         }
       }
+      setIsProcessingEmail(false);
     }
-  }, [toast]);
+  }, [toast, isProcessingEmail]);
 
   // Effect for initial check and setting up Firestore listener
   useEffect(() => {
@@ -119,18 +131,19 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     const ticketDocRef = doc(db, 'tickets', ticketId);
 
     // Initial fetch
-    getDoc(ticketDocRef).then(docSnap => {
+    getDoc(ticketDocRef).then(async (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setTicketDataFromDb(data);
         if (data.status === 'confirmed') {
           setIsPaymentReallyConfirmed(true);
           performRedirect(docSnap.id, data.eventId);
-          triggerEmailSendIfNeeded(docSnap.id, data); // Check email on initial load if confirmed
         }
+        // Attempt to send email on initial load if confirmed and not sent
+        await triggerEmailSendIfNeeded(docSnap.id, data);
       } else {
          toast({ title: "Error", description: `Ticket ${ticketId} not found.`, variant: "destructive" });
-         setShowMissingParamsError(true); // Treat as missing param
+         setShowMissingParamsError(true); 
       }
     }).catch(error => {
       console.error("Error fetching initial ticket status:", error);
@@ -141,7 +154,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     const unsubscribe = onSnapshot(ticketDocRef, async (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setTicketDataFromDb(data); // Keep local state of ticket data updated
+        setTicketDataFromDb(data); 
 
         if (data.status === 'confirmed' && !isPaymentReallyConfirmed) {
           setIsPaymentReallyConfirmed(true);
@@ -154,15 +167,13 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           });
           await performRedirect(docSnap.id, data.eventId);
         }
-        // Trigger email if status becomes confirmed and email not sent
-        if (data.status === 'confirmed') {
-            await triggerEmailSendIfNeeded(docSnap.id, data);
-        }
+        // Trigger email if status becomes confirmed (or is confirmed and email not sent)
+        await triggerEmailSendIfNeeded(docSnap.id, data);
 
       } else {
-        // Handle case where ticket might be deleted, though unlikely in this flow
         console.warn(`Ticket ${ticketId} no longer exists.`);
-        setIsPaymentReallyConfirmed(false); // Reset if ticket disappears
+        setIsPaymentReallyConfirmed(false); 
+        setTicketDataFromDb(null);
       }
     }, (error) => {
       console.error("Error listening to ticket status:", error);
@@ -224,7 +235,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       
       if (manualActionsTimerRef.current) clearTimeout(manualActionsTimerRef.current);
       manualActionsTimerRef.current = setTimeout(() => {
-        // Check isPaymentReallyConfirmed state directly from the state variable, not a stale closure value
         if (!isPaymentReallyConfirmed) { 
             setShowManualActions(true);
         }
@@ -253,17 +263,18 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     });
     
     setIsCheckingStatus(false);
+
+    // The onSnapshot listener will handle UI updates for payment confirmation and initial email sending.
+    // We only need to display the status message from the manual check itself here.
+    setManualStatusMessage(result.message || "Status check complete.");
+
     if (result.success && result.isConfirmed) {
-      // Firestore onSnapshot will handle the UI update to confirmed state, redirect, and email sending
-      setManualStatusMessage(result.message || "Payment confirmed by status check. Page will update.");
-      // No direct email sending here; onSnapshot handles it
-    } else {
-      setManualStatusMessage(result.message || "Could not retrieve status or payment not confirmed.");
-      if (result.success && !result.isConfirmed) { 
-         toast({ title: "Transaction Update", description: result.message, variant: "default"});
-      } else if (!result.success && !result.isConfirmed) {
-         toast({ title: "Status Check Info", description: result.message, variant: "default"});
-      }
+       // Firestore onSnapshot will catch this and trigger triggerEmailSendIfNeeded
+       // So no direct email toast here.
+    } else if (result.success && !result.isConfirmed) { 
+       toast({ title: "Transaction Update", description: result.message, variant: "default"});
+    } else if (!result.success) { // Covers !result.isConfirmed as well
+       toast({ title: "Status Check Info", description: result.message, variant: "default"});
     }
   };
 
@@ -277,7 +288,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setIsResendingEmail(false);
 
     if (result.success) {
-      toast({ title: "Email Resent", description: result.message, className: "bg-green-600 dark:bg-green-700 text-white" });
+      toast({ title: "Email Resent!", description: "Your ticket has been resent.", className: "bg-green-600 dark:bg-green-700 text-white" });
     } else {
       toast({ title: "Resend Failed", description: result.message, variant: "destructive" });
     }
@@ -299,17 +310,19 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                     if (currentTicketSnap.exists()) {
                       await performRedirect(ticketId, currentTicketSnap.data()?.eventId);
                     } else {
-                      await performRedirect(ticketId); // Fallback if doc gone
+                      await performRedirect(ticketId); 
                     }
                   }
               }}
             >
               Go to Ticket Status Now <ExternalLink className="ml-1 h-4 w-4"/>
             </Button>
-            <Button onClick={handleResendEmail} disabled={isResendingEmail} variant="secondary">
-              {isResendingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
-              Resend Ticket Email
-            </Button>
+             {ticketDataFromDb?.email && (
+                <Button onClick={handleResendEmail} disabled={isResendingEmail} variant="secondary">
+                    {isResendingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                    Resend Ticket Email
+                </Button>
+            )}
           </div>
         </div>
       );
@@ -511,7 +524,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           )}
         </CardFooter>
       )}
-       {isPaymentReallyConfirmed && !redirectMessage && ticketDataFromDb?.email && ( // Show resend if confirmed, no active redirect, and email exists
+       {isPaymentReallyConfirmed && !redirectMessage && ticketDataFromDb?.email && ( 
         <CardFooter className="flex flex-col items-center pt-2 pb-6 px-4 sm:px-6">
           <Button onClick={handleResendEmail} disabled={isResendingEmail} variant="outline" className="w-full max-w-xs">
             {isResendingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
