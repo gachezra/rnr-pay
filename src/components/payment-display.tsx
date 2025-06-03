@@ -77,15 +77,15 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setIsCheckingStatus(false);
   }, []);
 
-  const performRedirect = useCallback(async (confirmedTicketId: string, eventIdForRedirect?: string) => {
-    let urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${confirmedTicketId}`;
-    let message = `Payment Confirmed for ticket ${confirmedTicketId}!`;
+  const performRedirect = useCallback(async (confirmedTicketDocId: string, eventIdForRedirect?: string) => {
+    let urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${confirmedTicketDocId}`;
+    let message = `Payment Confirmed for ticket ${confirmedTicketDocId}!`;
 
     if (eventIdForRedirect) {
       urlToOpen = `https://rnr-tickets-hub.vercel.app/ticket-status?eventId=${eventIdForRedirect}`;
       message = `Payment Confirmed! Redirecting to status for event ${eventIdForRedirect}...`;
     } else {
-       message = `Payment Confirmed for ticket ${confirmedTicketId}! Redirecting to ticket status...`;
+       message = `Payment Confirmed for ticket ${confirmedTicketDocId}! Redirecting to ticket status...`;
     }
     setRedirectMessage(message);
     
@@ -98,19 +98,17 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   const triggerEmailSendIfNeeded = useCallback(async (currentTicketId: string, currentTicketData: DocumentData) => {
     if (currentTicketData.status === 'confirmed' && 
         currentTicketData.email && 
-        !currentTicketData.emailSent &&
+        !currentTicketData.emailSent && // Server action will double-check, but good to have here
         !isProcessingEmail) {
 
       setIsProcessingEmail(true);
-      // Simple toast, more details can be added if needed
-      // toast({ title: "Processing Email", description: "Your ticket is confirmed, preparing email...", className: "bg-blue-600 dark:bg-blue-700 text-white" });
       
       const emailResult: ProcessEmailResult = await processAndSendTicketEmail(currentTicketId);
       
       if (emailResult.attempted) {
-        if (emailResult.success && emailResult.message !== "Ticket email was already sent previously.") { // Avoid toasting if server said it was already sent
-          toast({ title: "Email Sent!", description: "Your ticket has been sent to your email address.", className: "bg-green-600 dark:bg-green-700 text-white" });
-        } else if (!emailResult.success) {
+        if (emailResult.success) { // If the server action reports success (either sent now or already sent)
+          toast({ title: "Email Sent!", description: "Your ticket has been sent to your email address.", className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800" });
+        } else { // This covers !emailResult.success
           toast({ title: "Email Issue", description: emailResult.message, variant: "destructive", duration: 7000 });
         }
       }
@@ -288,7 +286,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     setIsResendingEmail(false);
 
     if (result.success) {
-      toast({ title: "Email Resent!", description: "Your ticket has been resent.", className: "bg-green-600 dark:bg-green-700 text-white" });
+      toast({ title: "Email Resent!", description: "Your ticket has been resent.", className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800" });
     } else {
       toast({ title: "Resend Failed", description: result.message, variant: "destructive" });
     }
