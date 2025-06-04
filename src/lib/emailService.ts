@@ -31,23 +31,30 @@ interface EmailOptions {
   subject: string;
   text: string;
   html?: string;
+  inline?: {filename: string; data: Buffer; cid: string}[];
 }
 
 export async function sendEmail(options: EmailOptions): Promise<{success: boolean, message?: string}> {
   if (!mailgunClient) {
     console.log("[Simulated Email] Mailgun not initialized. Simulating email send:", options.to, options.subject);
+    if (options.inline && options.inline.length > 0) {
+        console.log(`[Simulated Email] Would have attached ${options.inline.length} inline image(s). First CID: ${options.inline[0].cid}`);
+    }
     await new Promise(resolve => setTimeout(resolve, 300)); 
     return { success: true, message: "Email sent (simulated as Mailgun is not configured)." };
   }
 
   try {
-    const data = {
+    const data: any = {
       from: MAILGUN_FROM_EMAIL,
       to: options.to,
       subject: options.subject,
       text: options.text,
       html: options.html || options.text,
     };
+    if (options.inline && options.inline.length > 0) {
+        data.inline = options.inline;
+    }
     const response = await mailgunClient.messages.create(MAILGUN_DOMAIN!, data);
     console.log("Email sent successfully via Mailgun:", response);
     return { success: true, message: "Email sent successfully." };
@@ -73,16 +80,18 @@ export async function sendPaymentConfirmationEmail(
   }
 
   const ticketStatusUrl = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketDocId}`;
-  let qrCodeDataUri = '';
+  let qrCodeBuffer: Buffer | null = null;
+  const qrCid = 'qrcode_ticket_status';
+
   try {
-    qrCodeDataUri = await QRCode.toDataURL(ticketStatusUrl, {
+    qrCodeBuffer = await QRCode.toBuffer(ticketStatusUrl, {
       errorCorrectionLevel: 'H',
       type: 'image/png',
       margin: 2,
       width: 150 
     });
   } catch (err) {
-    console.error('Failed to generate QR code:', err);
+    console.error('Failed to generate QR code buffer:', err);
     // Proceed without QR code if generation fails
   }
 
@@ -176,10 +185,10 @@ The RNR Solutions Team
                 <a href="${ticketStatusUrl}" class="button">Access Your Ticket</a>
             </div>
             
-            ${qrCodeDataUri ? `
+            ${qrCodeBuffer ? `
             <div class="qr-code-section">
                 <h4>Or Scan QR Code:</h4>
-                <img src="${qrCodeDataUri}" alt="Ticket Status QR Code" class="qr-code-image">
+                <img src="cid:${qrCid}" alt="Ticket Status QR Code" class="qr-code-image">
             </div>
             ` : ''}
 
@@ -193,13 +202,23 @@ The RNR Solutions Team
 </body>
 </html>
   `;
-
-  const result = await sendEmail({
+  
+  const emailOptions: EmailOptions = {
     to: toEmail,
     subject,
     text: textBody,
     html: htmlBody,
-  });
+  };
+
+  if (qrCodeBuffer) {
+    emailOptions.inline = [{
+      filename: 'qrcode.png',
+      data: qrCodeBuffer,
+      cid: qrCid 
+    }];
+  }
+
+  const result = await sendEmail(emailOptions);
 
   return result;
 }
