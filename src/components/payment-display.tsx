@@ -145,7 +145,6 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       }
     }).catch(error => {
       console.error("Error fetching initial ticket status:", error);
-      toast({ title: "Error", description: "Could not fetch initial ticket status.", variant: "destructive" });
     });
 
     // Real-time listener
