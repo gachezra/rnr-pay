@@ -1,4 +1,3 @@
-
 'use server';
 
 import formData from 'form-data';
@@ -64,6 +63,95 @@ export async function sendEmail(options: EmailOptions): Promise<{success: boolea
   }
 }
 
+// Function to generate QR code matrix data
+async function generateQRCodeMatrix(data: string): Promise<boolean[][]> {
+  try {
+    // Generate QR code as matrix (2D array of booleans)
+    const qrMatrix = await QRCode.create(data, {
+      width: 200,
+      margin: 2,
+      errorCorrectionLevel: 'M'
+    });
+    
+    // Convert the QR code modules to a 2D boolean array
+    const size = qrMatrix.modules.size;
+    const matrix: boolean[][] = [];
+    
+    for (let row = 0; row < size; row++) {
+      matrix[row] = [];
+      for (let col = 0; col < size; col++) {
+        matrix[row][col] = qrMatrix.modules.get(row, col);
+      }
+    }
+    
+    return matrix;
+  } catch (error) {
+    console.error('Error generating QR code matrix:', error);
+    // Return a simple 3x3 fallback pattern
+    return [
+      [true, false, true],
+      [false, true, false],
+      [true, false, true]
+    ];
+  }
+}
+
+// Function to generate HTML/CSS QR code
+async function generateQRCodeHTML(data: string): Promise<string> {
+  try {
+    const matrix = await generateQRCodeMatrix(data);
+    const size = matrix.length;
+    const cellSize = Math.floor(160 / size); // Adjust cell size based on matrix size
+    const totalSize = cellSize * size;
+    
+    // Generate the HTML table structure
+    let htmlRows = '';
+    for (let row = 0; row < size; row++) {
+      let htmlCells = '';
+      for (let col = 0; col < size; col++) {
+        const cellClass = matrix[row][col] ? 'qr-dark' : 'qr-light';
+        htmlCells += `<td class="${cellClass}"></td>`;
+      }
+      htmlRows += `<tr>${htmlCells}</tr>`;
+    }
+    
+    const qrCodeHTML = `
+      <div class="qr-code-html" style="display: inline-block; padding: 10px; background-color: #ffffff; border: 2px solid #202A44; border-radius: 8px;">
+        <table class="qr-table" style="border-collapse: collapse; border-spacing: 0; margin: 0; padding: 0; width: ${totalSize}px; height: ${totalSize}px;">
+          ${htmlRows}
+        </table>
+      </div>
+      <style>
+        .qr-table td {
+          width: ${cellSize}px;
+          height: ${cellSize}px;
+          padding: 0;
+          margin: 0;
+          border: none;
+        }
+        .qr-dark {
+          background-color: #000000;
+        }
+        .qr-light {
+          background-color: #ffffff;
+        }
+      </style>
+    `;
+    
+    return qrCodeHTML;
+  } catch (error) {
+    console.error('Error generating HTML QR code:', error);
+    // Return a fallback HTML pattern
+    return `
+      <div class="qr-code-html" style="display: inline-block; padding: 10px; background-color: #ffffff; border: 2px solid #202A44; border-radius: 8px;">
+        <div style="width: 160px; height: 160px; background-color: #f0f0f0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #666; text-align: center;">
+          QR Code<br>Generation Error
+        </div>
+      </div>
+    `;
+  }
+}
+
 export async function sendPaymentConfirmationEmail(
   toEmail: string,          
   ticketDocId: string,      
@@ -80,20 +168,9 @@ export async function sendPaymentConfirmationEmail(
   }
 
   const ticketStatusUrl = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketDocId}`;
-  let qrCodeBuffer: Buffer | null = null;
-  const qrCid = 'qrcode_ticket_status';
-
-  try {
-    qrCodeBuffer = await QRCode.toBuffer(ticketStatusUrl, {
-      errorCorrectionLevel: 'H',
-      type: 'image/png',
-      margin: 2,
-      width: 150 
-    });
-  } catch (err) {
-    console.error('Failed to generate QR code buffer:', err);
-    // Proceed without QR code if generation fails
-  }
+  
+  // Generate HTML/CSS QR code instead of image
+  const qrCodeHTML = await generateQRCodeHTML(ticketStatusUrl);
 
   const subject = `Payment Confirmed - Ticket ${ticketIdField}`;
   const textBody = `
@@ -129,13 +206,13 @@ The RNR Solutions Team
     <style>
         body, html { margin: 0; padding: 0; width: 100%; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; font-family: Arial, sans-serif; background-color: #f4f4f4; color: #333; }
         table { border-spacing: 0; }
-        img { border: 0; }
+        img { border: 0; display: block; max-width: 100%; height: auto; }
         .container { width: 100%; max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.1); overflow: hidden; }
         .header { background-color: #202A44; padding: 20px; text-align: center; }
         .logo-svg { width: 70px; height: 70px; margin-bottom: 15px; }
         .header h1 { color: #ffffff; margin: 0; font-size: 26px; }
         .content { padding: 30px; }
-        .content h3 { color: #D32F2F; font-size: 22px; margin-top: 0; font-weight: bold; }
+        .content h3 { color: #D32F2F; font-size: 20px; margin-top: 0; font-weight: bold; }
         .content p { line-height: 1.7; margin-bottom: 18px; font-size: 16px; }
         .ticket-details { border: 1px solid #ddd; border-radius: 6px; padding: 20px; margin: 25px 0; background-color: #f9f9f9; }
         .detail-item { margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 16px; }
@@ -143,16 +220,30 @@ The RNR Solutions Team
         .detail-value { font-weight: normal; color: #202A44; }
         .footer { background-color: #f0f0f0; padding: 20px; text-align: center; font-size: 14px; color: #777; }
         .button { display: inline-block; background-color: #D32F2F; color: #ffffff !important; padding: 12px 25px; text-decoration: none; border-radius: 5px; margin-top: 15px; font-weight: bold; font-size: 16px; }
-        .qr-code-section { text-align: center; margin-top: 25px; margin-bottom: 25px; }
-        .qr-code-section h4 { margin-bottom: 10px; color: #333; font-size: 18px; }
-        .qr-code-image { width: 150px; height: 150px; border: 1px solid #ddd; border-radius: 4px; }
+        .qr-code-section { text-align: center; margin: 30px 0; padding: 20px; background-color: #f8f9fa; border-radius: 8px; border: 1px solid #e0e0e0; }
+        .qr-code-section h4 { margin-bottom: 15px; color: #333; font-size: 18px; font-weight: bold; }
+        .qr-instruction { font-size: 14px; color: #666; margin-top: 10px; font-style: italic; }
+        
+        /* QR Code HTML/CSS Styles */
+        .qr-table td {
+          padding: 0;
+          margin: 0;
+          border: none;
+        }
+        .qr-dark {
+          background-color: #000000;
+        }
+        .qr-light {
+          background-color: #ffffff;
+        }
+        
         @media screen and (max-width: 600px) {
             .content { padding: 20px; }
             .header h1 { font-size: 22px; }
             .content p, .detail-item { font-size: 14px; }
             .button { padding: 10px 20px; font-size: 15px; }
             .qr-code-section h4 { font-size: 16px; }
-            .qr-code-image { width: 120px; height: 120px; }
+            .qr-code-html { transform: scale(0.8); }
         }
     </style>
 </head>
@@ -168,16 +259,23 @@ The RNR Solutions Team
             <h1>You're In! Get Ready for an Experience.</h1>
         </div>
         <div class="content">
-            <h3>Hey there,</h3>
+            <h3>Hey there</h3>
             <p>Your payment is confirmed and your spot is secured. We're thrilled to have you join the RNR Social Club community.</p>
 
+            <div class="qr-code-section">
+                <h4>Ticket QR Code</h4>
+                ${qrCodeHTML}
+                <div class="qr-instruction">
+                    Scan with your phone's camera for quick access
+                </div>
+            </div>
+
             <div class="ticket-details">
-                <div class="detail-item"><span>Ticket ID:</span> <span class="detail-value">${ticketIdField}</span></div>
-                <div class="detail-item"><span>M-Pesa Receipt:</span> <span class="detail-value">${mpesaReceiptNumber}</span></div>
-                <div class="detail-item"><span>Amount Paid:</span> <span class="detail-value">KES ${amount}</span></div>
-                <div class="detail-item"><span>Phone Number:</span> <span class="detail-value">${phoneNumber || 'N/A'}</span></div>
-                <div class="detail-item"><span>Tickets Secured:</span> <span class="detail-value">${quantity || 'N/A'}</span></div>
-                ${userProvidedEmailForReceipt ? `<div class="detail-item"><span>Email Provided:</span> <span class="detail-value">${userProvidedEmailForReceipt}</span></div>` : ''}
+                <h4>Ticket Details</h4>
+                <div class="detail-item"><span>Ticket ID:&ensp;</span> <span class="detail-value">${ticketIdField}</span></div>
+                <div class="detail-item"><span>Amount Paid:&ensp;</span> <span class="detail-value">KES ${amount}</span></div>
+                <div class="detail-item"><span>Phone Number:&ensp;</span> <span class="detail-value">${phoneNumber || 'N/A'}</span></div>
+                <div class="detail-item"><span>Tickets Secured:&ensp;</span> <span class="detail-value">${quantity || 'N/A'}</span></div>
             </div>
 
             <p>Ready to view your ticket? Click the button below to access all the details and get ready for the main event.</p>
@@ -185,12 +283,6 @@ The RNR Solutions Team
                 <a href="${ticketStatusUrl}" class="button">Access Your Ticket</a>
             </div>
             
-            ${qrCodeBuffer ? `
-            <div class="qr-code-section">
-                <h4>Or Scan QR Code:</h4>
-                <img src="cid:${qrCid}" alt="Ticket Status QR Code" class="qr-code-image">
-            </div>
-            ` : ''}
 
             <p style="font-size:0.9em; text-align:center; margin-top:20px;">Stay tuned for our upcoming lineup of more exciting events designed to elevate your social life!</p>
         </div>
@@ -210,16 +302,7 @@ The RNR Solutions Team
     html: htmlBody,
   };
 
-  if (qrCodeBuffer) {
-    emailOptions.inline = [{
-      filename: 'qrcode.png',
-      data: qrCodeBuffer,
-      cid: qrCid 
-    }];
-  }
-
   const result = await sendEmail(emailOptions);
 
   return result;
 }
-    
