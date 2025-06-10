@@ -167,7 +167,7 @@ export async function sendPaymentConfirmationEmail(
     return { success: false, message: "No recipient email address provided."};
   }
 
-  const ticketStatusUrl = `https://rnr-tickets-hub.vercel.app/ticket-status?ticketId=${ticketDocId}`;
+  const ticketStatusUrl = `https://rnrsocialhub.com/ticket-status?ticketId=${ticketDocId}`;
   
   // Generate HTML/CSS QR code instead of image
   const qrCodeHTML = await generateQRCodeHTML(ticketStatusUrl);
