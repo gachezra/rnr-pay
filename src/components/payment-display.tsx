@@ -9,8 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, CheckCircle2, XCircle, Info, Ticket, CreditCard, Phone, Mail, ExternalLink, AlertTriangle, RefreshCw, Search, Copy, Check, Send, MailWarning } from 'lucide-react';
-import { 
-  handlePaymentInitiation, type PaymentInitiationResult, 
+import {
+  handlePaymentInitiation, type PaymentInitiationResult,
   checkTransactionStatus, type TransactionStatusResult,
   processAndSendTicketEmail, type ProcessEmailResult,
   resendTicketEmailAction
@@ -33,21 +33,21 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   const [isLoading, setIsLoading] = useState(false);
   const [paymentInitiationResult, setPaymentInitiationResult] = useState<PaymentInitiationResult | null>(null);
   const [showMissingParamsError, setShowMissingParamsError] = useState(false);
-  
+
   const [currentPhone, setCurrentPhone] = useState(initialPhone || '');
   const [currentEmail, setCurrentEmail] = useState(initialEmail || '');
 
   const [isPaymentReallyConfirmed, setIsPaymentReallyConfirmed] = useState(false);
   const [redirectMessage, setRedirectMessage] = useState<string | null>(null);
   const redirectTimerRef = useRef<NodeJS.Timeout | null>(null);
-  
+
   const manualActionsTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [showManualActions, setShowManualActions] = useState(false);
   const [isCheckingStatus, setIsCheckingStatus] = useState(false);
   const [isResendingEmail, setIsResendingEmail] = useState(false);
   const [manualStatusMessage, setManualStatusMessage] = useState<string | null>(null);
   const [umeskiaTransactionRequestIdForStatusCheck, setUmeskiaTransactionRequestIdForStatusCheck] = useState<string | undefined>(undefined);
-  
+
   const [ticketCopied, setTicketCopied] = useState(false);
   const [ticketDataFromDb, setTicketDataFromDb] = useState<DocumentData | null>(null);
   const [isProcessingEmail, setIsProcessingEmail] = useState(false);
@@ -88,7 +88,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
        message = `Payment Confirmed for ticket ${confirmedTicketDocId}! Redirecting to ticket status...`;
     }
     setRedirectMessage(message);
-    
+
     if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
     redirectTimerRef.current = setTimeout(() => {
         window.open(urlToOpen, '_blank');
@@ -96,27 +96,26 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
   }, [setRedirectMessage]);
 
   const triggerEmailSendIfNeeded = useCallback(async (currentTicketId: string, currentTicketData: DocumentData) => {
-    if (currentTicketData.status === 'confirmed' && 
-        currentTicketData.email && 
-        !currentTicketData.emailSent && // Server action will double-check, but good to have here
+    if (currentTicketData.status === 'confirmed' &&
+        currentTicketData.email &&
+        !currentTicketData.emailSent && // Client-side check
         !isProcessingEmail) {
 
       setIsProcessingEmail(true);
-      
       const emailResult: ProcessEmailResult = await processAndSendTicketEmail(currentTicketId);
-      
-      if (emailResult.attempted) {
-        if (emailResult.success) { // If the server action reports success (either sent now or already sent)
-          toast({ title: "Email Sent!", description: "Your ticket has been sent to your email address.", className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800" });
-        } else { // This covers !emailResult.success
-          toast({ title: "Email Issue", description: emailResult.message, variant: "destructive", duration: 7000 });
-        }
+
+      // processAndSendTicketEmail returns success:true if email was sent OR if it was already sent (checked on server)
+      if (emailResult.attempted && emailResult.success) {
+        toast({ title: "Email Sent!", description: "Your ticket has been sent to your email address.", className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800" });
+      } else if (emailResult.attempted && !emailResult.success) { // Explicitly an error occurred during sending
+        toast({ title: "Email Issue", description: emailResult.message, variant: "destructive", duration: 7000 });
       }
+      // If not attempted (e.g., server determined no email on file or ticket not confirmed again), no new toast here.
       setIsProcessingEmail(false);
     }
   }, [toast, isProcessingEmail]);
 
-  // Effect for initial check and setting up Firestore listener
+
   useEffect(() => {
     if (!ticketId || !amount) {
       setShowMissingParamsError(true);
@@ -128,30 +127,37 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
     const ticketDocRef = doc(db, 'tickets', ticketId);
 
-    // Initial fetch
-    getDoc(ticketDocRef).then(async (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setTicketDataFromDb(data);
-        if (data.status === 'confirmed') {
-          setIsPaymentReallyConfirmed(true);
-          performRedirect(docSnap.id, data.eventId);
+    const initialFetchAndEmail = async () => {
+        try {
+            const docSnap = await getDoc(ticketDocRef);
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setTicketDataFromDb(data);
+                if (data.status === 'confirmed') {
+                    setIsPaymentReallyConfirmed(true); // Set this early if already confirmed
+                    // Only redirect on initial load if not already handled by listener during session
+                    if (!redirectMessage) { 
+                        performRedirect(docSnap.id, data.eventId);
+                    }
+                }
+                // Attempt to send email on initial load if confirmed and not sent
+                await triggerEmailSendIfNeeded(docSnap.id, data);
+            } else {
+                toast({ title: "Error", description: `Ticket ${ticketId} not found.`, variant: "destructive" });
+                setShowMissingParamsError(true);
+            }
+        } catch (error) {
+            console.error("Error fetching initial ticket status:", error);
+            toast({ title: "Error", description: "Could not fetch initial ticket data.", variant: "destructive" });
         }
-        // Attempt to send email on initial load if confirmed and not sent
-        await triggerEmailSendIfNeeded(docSnap.id, data);
-      } else {
-         toast({ title: "Error", description: `Ticket ${ticketId} not found.`, variant: "destructive" });
-         setShowMissingParamsError(true); 
-      }
-    }).catch(error => {
-      console.error("Error fetching initial ticket status:", error);
-    });
+    };
+    initialFetchAndEmail();
 
-    // Real-time listener
+
     const unsubscribe = onSnapshot(ticketDocRef, async (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
-        setTicketDataFromDb(data); 
+        setTicketDataFromDb(data);
 
         if (data.status === 'confirmed' && !isPaymentReallyConfirmed) {
           setIsPaymentReallyConfirmed(true);
@@ -162,14 +168,17 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
             className: "bg-green-600 dark:bg-green-700 text-white border-green-700 dark:border-green-800",
             duration: 5000,
           });
-          await performRedirect(docSnap.id, data.eventId);
+          // Perform redirect only if not already in a redirecting state from initial load
+          if (!redirectMessage) {
+             await performRedirect(docSnap.id, data.eventId);
+          }
         }
-        // Trigger email if status becomes confirmed (or is confirmed and email not sent)
+        // Always try to trigger email if status is confirmed and other conditions met
         await triggerEmailSendIfNeeded(docSnap.id, data);
 
       } else {
         console.warn(`Ticket ${ticketId} no longer exists.`);
-        setIsPaymentReallyConfirmed(false); 
+        setIsPaymentReallyConfirmed(false);
         setTicketDataFromDb(null);
       }
     }, (error) => {
@@ -182,7 +191,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
       if (manualActionsTimerRef.current) clearTimeout(manualActionsTimerRef.current);
     };
-  }, [ticketId, amount, toast, isPaymentReallyConfirmed, resetManualActionsState, performRedirect, triggerEmailSendIfNeeded]);
+  }, [ticketId, amount, toast, isPaymentReallyConfirmed, resetManualActionsState, performRedirect, triggerEmailSendIfNeeded, redirectMessage]);
 
 
   useEffect(() => {
@@ -218,7 +227,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
 
     const paymentParams = { ticketId, amount, phone: currentPhone, email: currentEmail || undefined };
     const result = await handlePaymentInitiation(paymentParams);
-    
+
     setIsLoading(false);
     setPaymentInitiationResult(result);
 
@@ -229,10 +238,10 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
         description: result.message || "Please check your phone to complete the payment.",
         className: "bg-blue-600 dark:bg-blue-700 text-white border-blue-700 dark:border-blue-800",
       });
-      
+
       if (manualActionsTimerRef.current) clearTimeout(manualActionsTimerRef.current);
       manualActionsTimerRef.current = setTimeout(() => {
-        if (!isPaymentReallyConfirmed) { 
+        if (!isPaymentReallyConfirmed) {
             setShowManualActions(true);
         }
       }, MANUAL_ACTIONS_DELAY);
@@ -258,21 +267,18 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       umeskiaTransactionRequestId: umeskiaTransactionRequestIdForStatusCheck,
       ticketId: ticketId,
     });
-    
+
     setIsCheckingStatus(false);
+    setManualStatusMessage(result.message || "Status check complete."); // Display result message from check
 
     // The onSnapshot listener will handle UI updates for payment confirmation and initial email sending.
-    // We only need to display the status message from the manual check itself here.
-    setManualStatusMessage(result.message || "Status check complete.");
-
-    if (result.success && result.isConfirmed) {
-       // Firestore onSnapshot will catch this and trigger triggerEmailSendIfNeeded
-       // So no direct email toast here.
-    } else if (result.success && !result.isConfirmed) { 
+    // We only show a general toast here if the status is still pending from this check.
+    if (result.success && !result.isConfirmed) {
        toast({ title: "Transaction Update", description: result.message, variant: "default"});
-    } else if (!result.success) { // Covers !result.isConfirmed as well
+    } else if (!result.success) {
        toast({ title: "Status Check Info", description: result.message, variant: "default"});
     }
+    // If result.isConfirmed is true, onSnapshot will take over for confirmation UI and email toast.
   };
 
   const handleResendEmail = async () => {
@@ -290,7 +296,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       toast({ title: "Resend Failed", description: result.message, variant: "destructive" });
     }
   };
-  
+
   const renderPaymentStatus = () => {
     if (isPaymentReallyConfirmed && redirectMessage) {
       return (
@@ -298,8 +304,8 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           <CheckCircle2 className="h-12 w-12 mx-auto text-green-500" />
           <p className="text-lg font-semibold text-foreground">{redirectMessage}</p>
           <div className="flex flex-col sm:flex-row gap-2 mt-2">
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               className="border-primary hover:bg-primary/10"
               onClick={async () => {
                   if (ticketId) {
@@ -307,7 +313,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
                     if (currentTicketSnap.exists()) {
                       await performRedirect(ticketId, currentTicketSnap.data()?.eventId);
                     } else {
-                      await performRedirect(ticketId); 
+                      await performRedirect(ticketId);
                     }
                   }
               }}
@@ -334,7 +340,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       );
     }
 
-    if (paymentInitiationResult?.success === true) { 
+    if (paymentInitiationResult?.success === true) {
       return (
         <div className="flex flex-col items-center justify-center space-y-4 p-4 text-center">
             <div className="flex items-center space-x-2 text-blue-500">
@@ -367,7 +373,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
       );
     }
 
-    if (paymentInitiationResult?.success === false && !showMissingParamsError) { 
+    if (paymentInitiationResult?.success === false && !showMissingParamsError) {
        return (
         <div className="flex flex-col items-center justify-center space-y-3 text-destructive p-4 border border-destructive rounded-md bg-red-50 dark:bg-red-900/30 shadow-md text-center">
           <XCircle className="h-12 w-12 mx-auto" />
@@ -376,7 +382,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
         </div>
       );
     }
-    return null; 
+    return null;
   };
 
   const canDisableInputs = isLoading || paymentInitiationResult?.success === true || isPaymentReallyConfirmed || isCheckingStatus;
@@ -487,7 +493,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
             </div>
           </>
         )}
-        
+
         <div className="mt-6 min-h-[100px] flex items-center justify-center">
           {renderPaymentStatus()}
         </div>
@@ -510,7 +516,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           )}
           {showRetryButtonAfterFail && (
               <Button
-              onClick={onInitiatePayment} 
+              onClick={onInitiatePayment}
               disabled={isLoading || !ticketId || !amount || !currentPhone || (currentPhone && !/^(0[17]\d{8}|254[17]\d{8})$/.test(currentPhone)) || (currentEmail && !/\S+@\S+\.\S+/.test(currentEmail)) || isPaymentReallyConfirmed}
               style={{ backgroundColor: MPESA_GREEN }}
               className="w-full text-lg py-3 sm:py-4 mt-2 text-white hover:opacity-90 rounded-lg shadow-sm"
@@ -521,7 +527,7 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
           )}
         </CardFooter>
       )}
-       {isPaymentReallyConfirmed && !redirectMessage && ticketDataFromDb?.email && ( 
+       {isPaymentReallyConfirmed && !redirectMessage && ticketDataFromDb?.email && (
         <CardFooter className="flex flex-col items-center pt-2 pb-6 px-4 sm:px-6">
           <Button onClick={handleResendEmail} disabled={isResendingEmail} variant="outline" className="w-full max-w-xs">
             {isResendingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
@@ -535,5 +541,3 @@ export const PaymentDisplay: FC<PaymentDisplayProps> = ({ ticketId, amount, phon
     </Card>
   );
 };
-
-    
