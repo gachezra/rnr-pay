@@ -43,7 +43,7 @@ export async function handlePaymentInitiation(
   const { ticketId: ticketDocId, amount, phone, email } = validation.data;
   const numericAmount = parseFloat(amount);
 
-  const mpesaApiUrl = process.env.MPESA_API_URL?.replace('api.umeskiasoftwares.com', 'comms.umeskiasoftwares.com');
+  const mpesaApiUrl = process.env.MPESA_API_URL;
   const mpesaApiKey = process.env.MPESA_API_KEY;
   const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL;
   const mpesaAccountId = process.env.MPESA_ACCOUNT_ID;
@@ -194,8 +194,7 @@ export async function checkTransactionStatus(
   const { umeskiaTransactionRequestId, ticketId: ticketDocId } = validation.data;
   
   const rawApiUrl = process.env.MPESA_API_URL;
-  const correctedApiUrl = rawApiUrl?.replace('api.umeskiasoftwares.com', 'comms.umeskiasoftwares.com');
-  const mpesaApiUrlBase = correctedApiUrl ? correctedApiUrl.substring(0, correctedApiUrl.lastIndexOf('/')) : undefined;
+  const mpesaApiUrlBase = rawApiUrl ? rawApiUrl.substring(0, rawApiUrl.lastIndexOf('/')) : undefined;
   const mpesaStatusApiUrl = mpesaApiUrlBase ? `${mpesaApiUrlBase}/transactionstatus` : undefined;
   
   const mpesaApiKey = process.env.MPESA_API_KEY;
