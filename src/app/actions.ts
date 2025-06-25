@@ -43,7 +43,7 @@ export async function handlePaymentInitiation(
   const { ticketId: ticketDocId, amount, phone, email } = validation.data;
   const numericAmount = parseFloat(amount);
 
-  const mpesaApiUrl = process.env.MPESA_API_URL;
+  const mpesaApiUrl = process.env.MPESA_API_URL?.replace('api.umeskiasoftwares.com', 'comms.umeskiasoftwares.com');
   const mpesaApiKey = process.env.MPESA_API_KEY;
   const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL;
   const mpesaAccountId = process.env.MPESA_ACCOUNT_ID;
@@ -192,14 +192,16 @@ export async function checkTransactionStatus(
   }
 
   const { umeskiaTransactionRequestId, ticketId: ticketDocId } = validation.data;
-
-  const mpesaApiUrlBase = process.env.MPESA_API_URL?.substring(0, process.env.MPESA_API_URL.lastIndexOf('/'));
-  const mpesaStatusApiUrl = `${mpesaApiUrlBase}/transactionstatus`;
+  
+  const rawApiUrl = process.env.MPESA_API_URL;
+  const correctedApiUrl = rawApiUrl?.replace('api.umeskiasoftwares.com', 'comms.umeskiasoftwares.com');
+  const mpesaApiUrlBase = correctedApiUrl ? correctedApiUrl.substring(0, correctedApiUrl.lastIndexOf('/')) : undefined;
+  const mpesaStatusApiUrl = mpesaApiUrlBase ? `${mpesaApiUrlBase}/transactionstatus` : undefined;
   
   const mpesaApiKey = process.env.MPESA_API_KEY;
   const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL;
 
-  if (!mpesaStatusApiUrl || !mpesaApiKey || !mpesaUmsEmail || !process.env.MPESA_API_URL) {
+  if (!mpesaStatusApiUrl || !mpesaApiKey || !mpesaUmsEmail) {
     console.error("M-Pesa API credentials or status URL for status check not configured.");
     return {
       success: false,
