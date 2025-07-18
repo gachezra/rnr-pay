@@ -89,8 +89,10 @@ export async function handlePaymentInitiation(
     });
 
     const mpesaApiResult = mpesaResponse.data;
+    const responseMessage = mpesaApiResult.massage || mpesaApiResult.message || mpesaApiResult.ResultDesc || "No message from provider.";
 
-    if (mpesaApiResult.success === "200" && mpesaApiResult.tranasaction_request_id) {
+    // Correctly check for Umeskia's success code and transaction ID
+    if (mpesaApiResult.ResultCode === "200" && mpesaApiResult.tranasaction_request_id) {
       const umeskiaTransactionRequestIdFromApi = mpesaApiResult.tranasaction_request_id;
 
       await updateDoc(ticketRef, {
@@ -107,17 +109,18 @@ export async function handlePaymentInitiation(
         email: email || null,
         umeskiaTransactionRequestId: umeskiaTransactionRequestIdFromApi,
         initiatedAt: serverTimestamp(),
-        providerResponse: mpesaApiResult.massage || mpesaApiResult.message || "STK push initiated.",
+        providerResponse: responseMessage,
       });
       
       return {
         success: true,
-        message: mpesaApiResult.massage || mpesaApiResult.message || "STK Push initiated successfully. Please check your phone to complete the payment.",
+        message: responseMessage || "STK Push initiated successfully. Please check your phone to complete the payment.",
         umeskiaTransactionRequestId: umeskiaTransactionRequestIdFromApi,
-        responseDescription: mpesaApiResult.massage || mpesaApiResult.message,
+        responseDescription: responseMessage,
       };
     } else {
-      const errorMessage = mpesaApiResult.massage || mpesaApiResult.message || "M-Pesa STK push initiation failed. Unexpected response from provider.";
+      // The API call was successful (2xx) but the business logic indicates a failure.
+      const errorMessage = responseMessage || "M-Pesa STK push initiation failed. Unexpected response from provider.";
       await updateDoc(ticketRef, {
         status: 'payment_initiation_failed',
         errorDetails: errorMessage,
@@ -136,8 +139,8 @@ export async function handlePaymentInitiation(
         const responseData = error.response.data;
         if (typeof responseData === 'string') {
             errorMessage = responseData;
-        } else if (responseData && (responseData.errors || responseData.message || responseData.massage || responseData.ResponseDescription)) {
-            errorMessage = JSON.stringify(responseData.errors || responseData.message || responseData.massage || responseData.ResponseDescription);
+        } else if (responseData && (responseData.errors || responseData.message || responseData.massage || responseData.ResultDesc || responseData.ResponseDescription)) {
+            errorMessage = JSON.stringify(responseData.errors || responseData.message || responseData.massage || responseData.ResultDesc || responseData.ResponseDescription);
         } else {
             errorMessage = `M-Pesa API request failed with status ${error.response.status}.`;
         }
@@ -174,7 +177,6 @@ export interface TransactionStatusResult {
   message: string;
   isConfirmed?: boolean;
   data?: any;
-  // Email fields removed as email sending is decoupled
 }
 
 export async function checkTransactionStatus(
@@ -194,8 +196,12 @@ export async function checkTransactionStatus(
   const { umeskiaTransactionRequestId, ticketId: ticketDocId } = validation.data;
   
   const rawApiUrl = process.env.MPESA_API_URL;
-  const mpesaApiUrlBase = rawApiUrl ? rawApiUrl.substring(0, rawApiUrl.lastIndexOf('/')) : undefined;
-  const mpesaStatusApiUrl = mpesaApiUrlBase ? `${mpesaApiUrlBase}/transactionstatus` : undefined;
+  if (!rawApiUrl) {
+    console.error("MPESA_API_URL not configured.");
+    return { success: false, message: "Payment gateway URL configuration error." };
+  }
+  const mpesaApiUrlBase = rawApiUrl.substring(0, rawApiUrl.lastIndexOf('/'));
+  const mpesaStatusApiUrl = `${mpesaApiUrlBase}/transactionstatus`;
   
   const mpesaApiKey = process.env.MPESA_API_KEY;
   const mpesaUmsEmail = process.env.MPESA_UMS_EMAIL;
