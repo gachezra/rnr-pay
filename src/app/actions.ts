@@ -90,10 +90,10 @@ export async function handlePaymentInitiation(
 
     const mpesaApiResult = mpesaResponse.data;
     const responseMessage = mpesaApiResult.massage || mpesaApiResult.message || mpesaApiResult.ResultDesc || "No message from provider.";
-
-    // Correctly check for Umeskia's success code and transaction ID
-    if (mpesaApiResult.ResultCode === "200" && mpesaApiResult.tranasaction_request_id) {
-      const umeskiaTransactionRequestIdFromApi = mpesaApiResult.tranasaction_request_id;
+    
+    // Correctly check for Umeskia's success code and transaction ID based on user-provided response
+    if (mpesaApiResult.success === "200" && mpesaApiResult.transaction_request_id) {
+      const umeskiaTransactionRequestIdFromApi = mpesaApiResult.transaction_request_id;
 
       await updateDoc(ticketRef, {
         umeskiaTransactionRequestId: umeskiaTransactionRequestIdFromApi,
